@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append('.')
 
-from src.redfish_mcp.redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
+from src.redfish_mcp.redfish_tool import list_endpoints, get_endpoint_data
 
 def test_redfish_tools():
     """Test all Redfish tools directly"""

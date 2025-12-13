@@ -202,7 +202,25 @@ pytest tests/test_chatbot.py
 
 ### Component Details
 
-#### 1. Chatbot (`src/redfish_mcp/chatbot.py`)
+#### 1. RedfishClient (`src/redfish_mcp/client.py`)
+- **Purpose**: Shared HTTP client for all Redfish operations
+- **Technology**: Requests library with session management
+- **Functionality**:
+  - Centralized HTTP request handling
+  - Error handling and response processing
+  - URL building and validation
+  - Connection pooling and timeout management
+
+#### 2. Configuration (`src/redfish_mcp/config.py`)
+- **Purpose**: Environment-based configuration management
+- **Technology**: Python environment variables
+- **Functionality**:
+  - Redfish server settings (URL, timeout, SSL)
+  - Authentication credentials (future)
+  - AI model configuration
+  - Logging settings (future)
+
+#### 3. Chatbot (`src/redfish_mcp/chatbot.py`)
 - **Purpose**: Natural language interface for Redfish operations
 - **Technology**: LangChain + Anthropic Claude
 - **Functionality**:
@@ -211,7 +229,7 @@ pytest tests/test_chatbot.py
   - Calls tools via MCP protocol
   - Maintains conversation context
 
-#### 2. MCP Server (`src/redfish_mcp/redfish_mcp_server.py`)
+#### 4. MCP Server (`src/redfish_mcp/redfish_mcp_server.py`)
 - **Purpose**: Exposes Redfish tools via Model Context Protocol
 - **Technology**: FastMCP framework
 - **Functionality**:
@@ -219,16 +237,16 @@ pytest tests/test_chatbot.py
   - Handles tool invocations
   - Manages communication with AI models
 
-#### 3. Redfish Tools (`src/redfish_mcp/redfish_tool.py`)
-- **Purpose**: Core Redfish API operations
-- **Technology**: LangChain tools + Requests library
+#### 5. Redfish Tools (`src/redfish_mcp/redfish_tool.py`)
+- **Purpose**: LangChain tool wrappers for Redfish operations
+- **Technology**: LangChain tools + RedfishClient
 - **Available Tools**:
   - `list_endpoints()`: Discover available Redfish endpoints
   - `get_endpoint_data()`: Retrieve data from specific endpoints
   - `patch_resource()`: Update resources via PATCH
   - `post_action()`: Execute actions via POST
 
-#### 4. Mock Server (`scripts/mock_redfish_server.py`)
+#### 6. Mock Server (`scripts/mock_redfish_server.py`)
 - **Purpose**: Development and testing environment
 - **Technology**: Flask web server
 - **Functionality**: Provides mock Redfish API responses
@@ -243,10 +261,20 @@ pytest tests/test_chatbot.py
 
 ### Configuration
 
-- **Redfish Base URL**: Configurable via `REDFISH_BASE` constant
-- **Default**: `http://127.0.0.1:8000/redfish/v1`
-- **Authentication**: Currently supports no-auth endpoints
-- **AI Model**: Claude 3.5 Haiku via Anthropic API
+Environment variables for configuration:
+
+- **REDFISH_BASE_URL**: Redfish server URL (default: `http://127.0.0.1:8000/redfish/v1`)
+- **REQUEST_TIMEOUT**: HTTP request timeout in seconds (default: `30`)
+- **VERIFY_SSL**: Whether to verify SSL certificates (default: `true`)
+- **ANTHROPIC_API_KEY**: Required for chatbot functionality
+- **ANTHROPIC_MODEL**: Claude model to use (default: `claude-3-5-haiku-20241022`)
+
+Example `.env` file:
+```bash
+REDFISH_BASE_URL=http://your-redfish-server:8000/redfish/v1
+ANTHROPIC_API_KEY=your-api-key-here
+REQUEST_TIMEOUT=60
+```
 
 ### Error Handling
 

@@ -3,13 +3,15 @@ import getpass
 from langchain_anthropic import ChatAnthropic
 from langchain.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from .redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
+from .config import config
 
-# Set API key
-if "ANTHROPIC_API_KEY" not in os.environ:
-    os.environ["ANTHROPIC_API_KEY"] = getpass.getpass("Enter your Anthropic API key: ")
+# Set API key if not already set
+if not config.ANTHROPIC_API_KEY:
+    config.ANTHROPIC_API_KEY = getpass.getpass("Enter your Anthropic API key: ")
+    os.environ["ANTHROPIC_API_KEY"] = config.ANTHROPIC_API_KEY
 
 # Instantiate model with tools
-model = ChatAnthropic(model="claude-3-5-haiku-20241022")
+model = ChatAnthropic(model=config.ANTHROPIC_MODEL)
 model_with_tools = model.bind_tools([list_endpoints, get_endpoint_data, patch_resource, post_action])
 
 def run_chatbot():
