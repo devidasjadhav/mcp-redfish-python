@@ -27,8 +27,8 @@ async def main() -> None:
     # Setup server params for local filesystem access
     parent = Path(__file__).parent / "mcp-redfish"
     redfish_server = StdioServerParams(
-        command="uv",
-        args=["run", "--directory", str(parent), "-m", "src.main"],
+        command="sh",
+        args=["-c", f"cd {parent} && python3 -m src.main"],
         env={
             "PYTHONPATH": "./src",
             "REDFISH_HOSTS": '[{"address": "http://localhost:8000"}]',
@@ -39,7 +39,7 @@ async def main() -> None:
     redfish_tools = await mcp_server_tools(redfish_server)
 
     # Create the AssistantAgent
-    model_client = AnthropicChatCompletionClient(model="claude-3-5-sonnet-20241022")
+    model_client = AnthropicChatCompletionClient(model="claude-3-haiku-20240307")
     memory = ListMemory()
     assistant = AssistantAgent(
         name="demo_agent",
