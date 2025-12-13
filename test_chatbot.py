@@ -38,7 +38,7 @@ def mock_invoke(messages):
         })()
 
 # Patch the model
-with patch.object(model_with_tools, 'invoke', side_effect=mock_invoke):
+with patch('chatbot.model_with_tools.invoke', side_effect=mock_invoke):
     # Test inputs
     test_inputs = [
         "List the available Redfish endpoints",

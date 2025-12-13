@@ -31,7 +31,7 @@ async def main() -> None:
         args=["-c", f"cd {parent} && python3 -m src.main"],
         env={
             "PYTHONPATH": "./src",
-            "REDFISH_HOSTS": '[{"address": "http://localhost:8000"}]',
+            "REDFISH_HOSTS": '["http://localhost:8000"]',
             "REDFISH_USERNAME": "",
             "REDFISH_PASSWORD": "",
         },
