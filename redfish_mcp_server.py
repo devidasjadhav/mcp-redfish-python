@@ -4,7 +4,7 @@ import json
 
 app = FastMCP("Redfish MCP Server")
 
-REDFISH_BASE = "http://localhost:8000/redfish/v1"
+REDFISH_BASE = "http://127.0.0.1:8000/redfish/v1"
 
 @app.tool()
 def list_endpoints() -> str:
