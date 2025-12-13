@@ -1,41 +1,44 @@
 from langchain.tools import tool
+import requests
+
+REDFISH_BASE = "http://localhost:8000/redfish/v1"
 
 @tool
 def list_endpoints() -> str:
-    """List available Redfish endpoints."""
-    # Mock implementation - in real use, this would query actual Redfish servers
-    return """
-Available Redfish endpoints:
-- Server1: https://server1.example.com/redfish/v1
-- Server2: https://server2.example.com/redfish/v1
-
-Each endpoint provides access to hardware information, sensors, and management features.
-"""
+    """List available Redfish endpoints by querying the root service."""
+    try:
+        response = requests.get(REDFISH_BASE)
+        if response.status_code == 200:
+            data = response.json()
+            endpoints = []
+            for key, value in data.items():
+                if isinstance(value, dict) and "@odata.id" in value:
+                    endpoints.append(f"- {key}: {value['@odata.id']}")
+            return f"Available Redfish endpoints from {REDFISH_BASE}:\n" + "\n".join(endpoints)
+        else:
+            return f"Failed to query Redfish service: {response.status_code}"
+    except Exception as e:
+        return f"Error querying Redfish service: {e}"
 
 @tool
 def get_endpoint_data(endpoint_url: str) -> str:
     """Get data from a specific Redfish endpoint.
 
     Args:
-        endpoint_url: The URL of the Redfish endpoint to query
+        endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems')
     """
-    # Mock implementation - in real use, this would make HTTP requests to the endpoint
-    mock_data = {
-        "https://server1.example.com/redfish/v1": {
-            "Systems": "/redfish/v1/Systems",
-            "Chassis": "/redfish/v1/Chassis",
-            "Managers": "/redfish/v1/Managers",
-            "MAC Addresses": ["00:11:22:33:44:55", "AA:BB:CC:DD:EE:FF"]
-        },
-        "https://server1.example.com/redfish/v1/Systems": {
-            "Members": [{"@odata.id": "/redfish/v1/Systems/1"}]
-        },
-        "https://server1.example.com/redfish/v1/Systems/1": {
-            "Name": "Server1",
-            "Model": "PowerEdge R750",
-            "SerialNumber": "ABC123",
-            "Status": {"State": "Enabled", "Health": "OK"}
-        }
-    }
+    try:
+        # If it's a relative path, prepend the base
+        if not endpoint_url.startswith("http"):
+            full_url = f"{REDFISH_BASE}{endpoint_url}"
+        else:
+            full_url = endpoint_url
 
-    return str(mock_data.get(endpoint_url, f"No data available for endpoint: {endpoint_url}"))
+        response = requests.get(full_url)
+        if response.status_code == 200:
+            data = response.json()
+            return str(data)
+        else:
+            return f"Failed to query endpoint {full_url}: {response.status_code}"
+    except Exception as e:
+        return f"Error querying endpoint {endpoint_url}: {e}"
