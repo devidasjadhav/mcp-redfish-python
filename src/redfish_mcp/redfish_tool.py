@@ -6,11 +6,13 @@ from langchain.tools import tool
 from .client import RedfishClient
 from .config import config
 
-# Create shared client instance
+# Create shared client instance with resilience features
 _client = RedfishClient(
     base_url=config.REDFISH_BASE_URL,
     timeout=config.REQUEST_TIMEOUT,
-    verify_ssl=config.VERIFY_SSL
+    verify_ssl=config.VERIFY_SSL,
+    enable_retry=config.ENABLE_RETRY,
+    enable_circuit_breaker=config.ENABLE_CIRCUIT_BREAKER
 )
 
 @tool
