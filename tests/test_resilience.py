@@ -204,6 +204,12 @@ class TestRedfishClient(unittest.TestCase):
         mock_response = Mock()
         mock_response.status_code = 500
         mock_response.json.return_value = {"error": {"message": "Server error"}}
+
+        # CRITICAL FIX: Configure raise_for_status to raise HTTPError for 5xx status
+        http_error = requests.HTTPError("500 Server Error")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+
         mock_request.return_value = mock_response
 
         with self.assertRaises(RedfishServerError) as cm:
