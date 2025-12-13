@@ -2,7 +2,7 @@ import os
 import getpass
 from langchain_anthropic import ChatAnthropic
 from langchain.messages import HumanMessage, AIMessage, ToolMessage
-from redfish_tool import list_endpoints, get_endpoint_data
+from redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
 
 # Set API key
 if "ANTHROPIC_API_KEY" not in os.environ:
@@ -10,7 +10,7 @@ if "ANTHROPIC_API_KEY" not in os.environ:
 
 # Instantiate model with tools
 model = ChatAnthropic(model="claude-3-5-haiku-20241022")
-model_with_tools = model.bind_tools([list_endpoints, get_endpoint_data])
+model_with_tools = model.bind_tools([list_endpoints, get_endpoint_data, patch_resource, post_action])
 
 def run_chatbot():
     # Chat loop
@@ -36,6 +36,10 @@ def run_chatbot():
                     result = list_endpoints.invoke({})
                 elif tool_call["name"] == "get_endpoint_data":
                     result = get_endpoint_data.invoke(tool_call["args"])
+                elif tool_call["name"] == "patch_resource":
+                    result = patch_resource.invoke(tool_call["args"])
+                elif tool_call["name"] == "post_action":
+                    result = post_action.invoke(tool_call["args"])
                 else:
                     result = "Unknown tool"
                 tool_messages.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))

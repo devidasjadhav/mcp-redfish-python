@@ -1,7 +1,8 @@
 from langchain.tools import tool
 import requests
+import json
 
-REDFISH_BASE = "http://localhost:8000/redfish/v1"
+REDFISH_BASE = "http://127.0.0.1:8000/redfish/v1"
 
 @tool
 def list_endpoints() -> str:
@@ -42,3 +43,59 @@ def get_endpoint_data(endpoint_url: str) -> str:
             return f"Failed to query endpoint {full_url}: {response.status_code}"
     except Exception as e:
         return f"Error querying endpoint {endpoint_url}: {e}"
+
+@tool
+def patch_resource(endpoint_url: str, patch_data: str) -> str:
+    """Update a Redfish resource using PATCH.
+
+    Args:
+        endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems/1')
+        patch_data: JSON string of the properties to update (e.g., '{"Description": "Updated"}')
+    """
+    try:
+        # If it's a relative path, prepend the base
+        if not endpoint_url.startswith("http"):
+            full_url = f"{REDFISH_BASE}{endpoint_url}"
+        else:
+            full_url = endpoint_url
+
+        # Parse patch_data as JSON
+        data = json.loads(patch_data)
+
+        response = requests.patch(full_url, json=data, headers={'Content-Type': 'application/json'})
+        if response.status_code in [200, 204]:
+            return f"Successfully updated resource at {full_url}"
+        else:
+            return f"Failed to update resource {full_url}: {response.status_code} - {response.text}"
+    except json.JSONDecodeError:
+        return "Invalid JSON in patch_data"
+    except Exception as e:
+        return f"Error updating resource {endpoint_url}: {e}"
+
+@tool
+def post_action(action_url: str, action_data: str) -> str:
+    """Execute a Redfish action using POST.
+
+    Args:
+        action_url: The full URL of the action endpoint (e.g., '/Systems/1/Actions/ComputerSystem.Reset')
+        action_data: JSON string of the action parameters (e.g., '{"ResetType": "GracefulRestart"}')
+    """
+    try:
+        # If it's a relative path, prepend the base
+        if not action_url.startswith("http"):
+            full_url = f"{REDFISH_BASE}{action_url}"
+        else:
+            full_url = action_url
+
+        # Parse action_data as JSON
+        data = json.loads(action_data) if action_data else {}
+
+        response = requests.post(full_url, json=data, headers={'Content-Type': 'application/json'})
+        if response.status_code in [200, 201, 202, 204]:
+            return f"Successfully executed action at {full_url}. Status: {response.status_code}"
+        else:
+            return f"Failed to execute action {full_url}: {response.status_code} - {response.text}"
+    except json.JSONDecodeError:
+        return "Invalid JSON in action_data"
+    except Exception as e:
+        return f"Error executing action {action_url}: {e}"

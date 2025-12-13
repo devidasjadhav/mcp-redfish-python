@@ -74,5 +74,33 @@ def patch_resource(endpoint_url: str, patch_data: str) -> str:
     except Exception as e:
         return f"Error updating resource {endpoint_url}: {e}"
 
+@app.tool()
+def post_action(action_url: str, action_data: str) -> str:
+    """Execute a Redfish action using POST.
+
+    Args:
+        action_url: The full URL of the action endpoint (e.g., '/Systems/1/Actions/ComputerSystem.Reset')
+        action_data: JSON string of the action parameters (e.g., '{"ResetType": "GracefulRestart"}')
+    """
+    try:
+        # If it's a relative path, prepend the base
+        if not action_url.startswith("http"):
+            full_url = f"{REDFISH_BASE}{action_url}"
+        else:
+            full_url = action_url
+
+        # Parse action_data as JSON
+        data = json.loads(action_data) if action_data else {}
+
+        response = requests.post(full_url, json=data, headers={'Content-Type': 'application/json'})
+        if response.status_code in [200, 201, 202, 204]:
+            return f"Successfully executed action at {full_url}. Status: {response.status_code}"
+        else:
+            return f"Failed to execute action {full_url}: {response.status_code} - {response.text}"
+    except json.JSONDecodeError:
+        return "Invalid JSON in action_data"
+    except Exception as e:
+        return f"Error executing action {action_url}: {e}"
+
 if __name__ == "__main__":
     app.run()
