@@ -2,7 +2,7 @@ import os
 import getpass
 from langchain_anthropic import ChatAnthropic
 from langchain.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
-from redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
+from .redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
 
 # Set API key
 if "ANTHROPIC_API_KEY" not in os.environ:

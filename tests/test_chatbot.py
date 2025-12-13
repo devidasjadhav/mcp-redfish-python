@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ["ANTHROPIC_API_KEY"] = "dummy_key_for_testing"
 
 # Import after setting env
-from chatbot import model_with_tools, list_endpoints, get_endpoint_data, run_chatbot, HumanMessage, ToolMessage
+from src.redfish_mcp.chatbot import model_with_tools, list_endpoints, get_endpoint_data, run_chatbot, HumanMessage, ToolMessage
 
 # Mock the model invoke to return test responses
 def mock_invoke(messages):
@@ -38,7 +38,7 @@ def mock_invoke(messages):
         })()
 
 # Patch the model
-with patch('chatbot.model_with_tools.invoke', side_effect=mock_invoke):
+with patch('src.redfish_mcp.chatbot.model_with_tools.invoke', side_effect=mock_invoke):
     # Test inputs
     test_inputs = [
         "List the available Redfish endpoints",
