@@ -1,5 +1,6 @@
 from fastmcp import FastMCP
 import requests
+import json
 
 app = FastMCP("Redfish MCP Server")
 
@@ -44,6 +45,34 @@ def get_endpoint_data(endpoint_url: str) -> str:
             return f"Failed to query endpoint {full_url}: {response.status_code}"
     except Exception as e:
         return f"Error querying endpoint {endpoint_url}: {e}"
+
+@app.tool()
+def patch_resource(endpoint_url: str, patch_data: str) -> str:
+    """Update a Redfish resource using PATCH.
+
+    Args:
+        endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems/1')
+        patch_data: JSON string of the properties to update (e.g., '{"Description": "Updated"}')
+    """
+    try:
+        # If it's a relative path, prepend the base
+        if not endpoint_url.startswith("http"):
+            full_url = f"{REDFISH_BASE}{endpoint_url}"
+        else:
+            full_url = endpoint_url
+
+        # Parse patch_data as JSON
+        data = json.loads(patch_data)
+
+        response = requests.patch(full_url, json=data, headers={'Content-Type': 'application/json'})
+        if response.status_code in [200, 204]:
+            return f"Successfully updated resource at {full_url}"
+        else:
+            return f"Failed to update resource {full_url}: {response.status_code} - {response.text}"
+    except json.JSONDecodeError:
+        return "Invalid JSON in patch_data"
+    except Exception as e:
+        return f"Error updating resource {endpoint_url}: {e}"
 
 if __name__ == "__main__":
     app.run()

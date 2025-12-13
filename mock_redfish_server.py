@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
@@ -36,8 +36,11 @@ def systems():
         ]
     })
 
-@app.route('/redfish/v1/Systems/1')
+@app.route('/redfish/v1/Systems/1', methods=['GET', 'PATCH'])
 def system1():
+    if request.method == 'PATCH':
+        # Simple mock: accept any patch and return success
+        return '', 204
     return jsonify({
         "@odata.id": "/redfish/v1/Systems/1",
         "@odata.type": "#ComputerSystem.v1_0_0.ComputerSystem",
