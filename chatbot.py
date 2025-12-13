@@ -1,7 +1,7 @@
 import os
 import getpass
 from langchain_anthropic import ChatAnthropic
-from langchain.messages import HumanMessage, AIMessage, ToolMessage
+from langchain.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from redfish_tool import list_endpoints, get_endpoint_data, patch_resource, post_action
 
 # Set API key
@@ -15,8 +15,9 @@ model_with_tools = model.bind_tools([list_endpoints, get_endpoint_data, patch_re
 def run_chatbot():
     # Chat loop
     messages = []
-    print("Chatbot ready! Type 'quit' or 'exit' to end the conversation.")
-    print("You can ask about Redfish endpoints and server information.")
+    messages.append(SystemMessage(content="You are an intelligent Redfish control agent. Analyze user requests, determine appropriate Redfish operations, and use the available tools to execute them. Always discover capabilities first if needed. Be helpful and explain your actions."))
+    print("Intelligent Redfish Chatbot ready! Type 'quit' or 'exit' to end the conversation.")
+    print("I can help with Redfish server management using intelligent reasoning.")
 
     while True:
         user_input = input("You: ")
