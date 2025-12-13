@@ -5,7 +5,6 @@ Logging configuration for Redfish MCP
 import logging
 import sys
 from typing import Optional
-from .config import config
 
 
 def setup_logging(
@@ -56,13 +55,32 @@ def setup_logging(
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except (OSError, IOError) as e:
-            logger.warning(f"Could not create log file {log_file}: {e}")
+            # Use print since logger might not be fully set up yet
+            print(f"Warning: Could not create log file {log_file}: {e}")
 
     return logger
 
 
-# Global logger instance
+# Global logger instance (will be reconfigured when config is loaded)
 logger = setup_logging(
-    level=config.LOG_LEVEL,
-    log_file=config.LOG_FILE
+    level="INFO",  # Default level until config is loaded
+    log_file=None
 )
+
+
+def reconfigure_logging_from_config():
+    """
+    Reconfigure logging using the loaded configuration.
+    This should be called after config is loaded.
+    """
+    try:
+        # Import here to avoid circular imports
+        from .config import config
+        global logger
+        logger = setup_logging(
+            level=config.LOG_LEVEL,
+            log_file=config.LOG_FILE
+        )
+    except ImportError:
+        # Config not loaded yet, keep default logger
+        pass

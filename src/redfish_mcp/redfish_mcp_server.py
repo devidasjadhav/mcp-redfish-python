@@ -2,11 +2,29 @@
 Redfish MCP Server - FastMCP server exposing Redfish tools
 """
 
+import sys
 from fastmcp import FastMCP
 from .client import RedfishClient
 from .config import config
+from .logging_config import logger, reconfigure_logging_from_config
 
-app = FastMCP("Redfish MCP Server")
+# Reconfigure logging with loaded config
+reconfigure_logging_from_config()
+
+# Validate configuration on startup
+logger.info("Validating configuration...")
+validation_errors = config.validate()
+if validation_errors:
+    logger.error("Configuration validation failed:")
+    for error in validation_errors:
+        logger.error(f"  - {error}")
+    logger.error("Please check your .env file or environment variables")
+    sys.exit(1)
+
+logger.info("Configuration validated successfully")
+logger.debug(f"Configuration: {config.to_dict()}")
+
+app = FastMCP(config.MCP_SERVER_NAME)
 
 # Create shared client instance with resilience features
 _client = RedfishClient(

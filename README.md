@@ -58,8 +58,18 @@ This project provides an AI-powered interface for managing Redfish-enabled serve
    pip install -r requirements.txt
    ```
 
-3. **Set Anthropic API key**
+3. **Configure environment**
    ```bash
+   # Copy the example configuration
+   cp .env.example .env
+
+   # Edit .env with your settings
+   nano .env  # or your preferred editor
+   ```
+
+4. **Set required API key**
+   ```bash
+   # Either in .env file or environment variable
    export ANTHROPIC_API_KEY="your-anthropic-api-key-here"
    ```
 
@@ -261,19 +271,81 @@ pytest tests/test_chatbot.py
 
 ### Configuration
 
-Environment variables for configuration:
+The application supports configuration through environment variables and `.env` files. Create a `.env` file from the provided template:
 
+```bash
+cp .env.example .env
+```
+
+#### Environment Variables
+
+**Redfish Server Settings:**
 - **REDFISH_BASE_URL**: Redfish server URL (default: `http://127.0.0.1:8000/redfish/v1`)
 - **REQUEST_TIMEOUT**: HTTP request timeout in seconds (default: `30`)
 - **VERIFY_SSL**: Whether to verify SSL certificates (default: `true`)
+
+**Authentication:**
+- **REDFISH_USERNAME**: Username for Redfish authentication (optional)
+- **REDFISH_PASSWORD**: Password for Redfish authentication (optional)
+
+**Resilience Settings:**
+- **ENABLE_RETRY**: Enable automatic retry with backoff (default: `true`)
+- **ENABLE_CIRCUIT_BREAKER**: Enable circuit breaker protection (default: `true`)
+- **MAX_RETRY_ATTEMPTS**: Maximum retry attempts (default: `3`)
+- **RETRY_BASE_DELAY**: Base delay between retries in seconds (default: `1.0`)
+- **RETRY_MAX_DELAY**: Maximum delay between retries in seconds (default: `30.0`)
+- **CIRCUIT_BREAKER_THRESHOLD**: Failures before opening circuit (default: `5`)
+- **CIRCUIT_BREAKER_TIMEOUT**: Recovery timeout in seconds (default: `60.0`)
+
+**AI Configuration:**
 - **ANTHROPIC_API_KEY**: Required for chatbot functionality
 - **ANTHROPIC_MODEL**: Claude model to use (default: `claude-3-5-haiku-20241022`)
 
-Example `.env` file:
+**Logging:**
+- **LOG_LEVEL**: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) (default: `INFO`)
+- **LOG_FILE**: Optional log file path
+
+**MCP Server:**
+- **MCP_SERVER_NAME**: Server display name (default: `Redfish MCP Server`)
+- **MCP_SERVER_VERSION**: Server version (default: `1.0.0`)
+- **MCP_TRANSPORT**: Transport protocol (default: `stdio`)
+
+#### Configuration Validation
+
+The application validates configuration on startup and will exit with clear error messages if required settings are missing or invalid.
+
+#### Example .env file:
 ```bash
+# Redfish Server Configuration
 REDFISH_BASE_URL=http://your-redfish-server:8000/redfish/v1
-ANTHROPIC_API_KEY=your-api-key-here
-REQUEST_TIMEOUT=60
+REQUEST_TIMEOUT=30
+VERIFY_SSL=true
+
+# Authentication (leave empty if not required)
+REDFISH_USERNAME=
+REDFISH_PASSWORD=
+
+# Resilience Configuration
+ENABLE_RETRY=true
+ENABLE_CIRCUIT_BREAKER=true
+MAX_RETRY_ATTEMPTS=3
+RETRY_BASE_DELAY=1.0
+RETRY_MAX_DELAY=30.0
+CIRCUIT_BREAKER_THRESHOLD=5
+CIRCUIT_BREAKER_TIMEOUT=60.0
+
+# AI Configuration
+ANTHROPIC_API_KEY=your-anthropic-api-key-here
+ANTHROPIC_MODEL=claude-3-5-haiku-20241022
+
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FILE=
+
+# MCP Server Configuration
+MCP_SERVER_NAME=Redfish MCP Server
+MCP_SERVER_VERSION=1.0.0
+MCP_TRANSPORT=stdio
 ```
 
 ### Error Handling
