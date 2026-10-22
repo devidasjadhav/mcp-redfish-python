@@ -253,8 +253,20 @@ pytest tests/test_chatbot.py
 - **Available Tools**:
   - `list_endpoints()`: Discover available Redfish endpoints
   - `get_endpoint_data()`: Retrieve data from specific endpoints
-  - `patch_resource()`: Update resources via PATCH
-  - `post_action()`: Execute actions via POST
+  - `find_capabilities()`: Find writable properties/actions and candidate resources
+  - `set_properties()`: Apply validated values to one resolved resource
+  - `invoke_action()`: Invoke an action with validated parameters
+
+Write tools never accept raw HTTP bodies or action URLs. The server follows
+same-origin `@odata.id` links with read-only requests, learns a typed contract
+for the target and Redfish role, and constructs PATCH/POST requests itself.
+Storage, cache hits, and re-exploration are transparent to MCP clients.
+
+When several resources expose the same property, selectors such as `Name`,
+`Id`, resource type, interface kind, endpoint, or ancestor path are applied
+first. If context still does not identify one resource, the tool returns
+labeled candidates and performs no write. Retry with the selected
+`candidate_id`; do not choose the first candidate automatically.
 
 #### 6. Mock Server (`scripts/mock_redfish_server.py`)
 - **Purpose**: Development and testing environment
@@ -287,6 +299,21 @@ cp .env.example .env
 **Authentication:**
 - **REDFISH_USERNAME**: Username for Redfish authentication (optional)
 - **REDFISH_PASSWORD**: Password for Redfish authentication (optional)
+
+**Learned contracts:**
+- **CONTRACT_SQLITE_PATH**: Shared SQLite file (default: `.redfish_contracts.sqlite3`)
+- **REDIS_URL**: Use Redis instead of SQLite when set
+- **CONTRACT_PROBE_TTL_SECONDS**: Firmware/identity probe TTL (default: `30`)
+- **CONTRACT_REFRESH_TTL_SECONDS**: Full topology refresh TTL (default: `300`)
+- **CANDIDATE_TTL_SECONDS**: Ambiguous candidate lifetime (default: `300`)
+- **EXPLORE_MAX_RESOURCES**: Maximum resources explored per call (default: `200`)
+- **EXPLORE_MAX_DEPTH**: Maximum navigation depth (default: `8`)
+- **EXPLORE_MAX_ACTIONS**: Maximum ActionInfo documents per resource (default: `16`)
+- **MAX_RESPONSE_BYTES**: Maximum accepted response body (default: `1048576`)
+
+SQLite is appropriate for processes sharing a filesystem. Set `REDIS_URL` for
+instances on different hosts. Contracts are isolated by service UUID and role;
+write audit records include the exact contract revision.
 
 **Resilience Settings:**
 - **ENABLE_RETRY**: Enable automatic retry with backoff (default: `true`)
@@ -324,6 +351,17 @@ VERIFY_SSL=true
 # Authentication (leave empty if not required)
 REDFISH_USERNAME=
 REDFISH_PASSWORD=
+
+# Learned Contract Storage (set REDIS_URL for multi-host deployments)
+CONTRACT_SQLITE_PATH=.redfish_contracts.sqlite3
+REDIS_URL=
+CONTRACT_PROBE_TTL_SECONDS=30
+CONTRACT_REFRESH_TTL_SECONDS=300
+CANDIDATE_TTL_SECONDS=300
+EXPLORE_MAX_RESOURCES=200
+EXPLORE_MAX_DEPTH=8
+EXPLORE_MAX_ACTIONS=16
+MAX_RESPONSE_BYTES=1048576
 
 # Resilience Configuration
 ENABLE_RETRY=true

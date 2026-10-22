@@ -2,10 +2,9 @@
 Redfish Client - Shared HTTP client for Redfish operations
 """
 
-import json
 import requests
-from typing import Dict, Any, Optional
-from urllib.parse import urljoin
+from typing import Any, Dict, Mapping, Optional, Tuple
+from urllib.parse import urljoin, urlparse
 
 from .exceptions import (
     RedfishError, RedfishConnectionError, RedfishAuthenticationError,
@@ -32,7 +31,10 @@ class RedfishClient:
         enable_retry: bool = True,
         enable_circuit_breaker: bool = True,
         retry_config: Optional[RetryConfig] = None,
-        circuit_breaker: Optional[CircuitBreaker] = None
+        circuit_breaker: Optional[CircuitBreaker] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        max_response_bytes: int = 1024 * 1024,
     ):
         """
         Initialize Redfish client with resilience features.
@@ -51,8 +53,13 @@ class RedfishClient:
         self.verify_ssl = verify_ssl
         self.enable_retry = enable_retry
         self.enable_circuit_breaker = enable_circuit_breaker
+        self.max_response_bytes = max_response_bytes
+        self._origin = self._url_origin(self.base_url)
+        self._service_path = urlparse(self.base_url).path.rstrip("/")
 
         self.session = requests.Session()
+        if username:
+            self.session.auth = (username, password or "")
 
         # Set default headers
         self.session.headers.update({
@@ -86,9 +93,43 @@ class RedfishClient:
         Returns:
             Full URL string
         """
-        if endpoint.startswith('http'):
-            return endpoint
-        return urljoin(self.base_url + '/', endpoint.lstrip('/'))
+        if endpoint.startswith(("http://", "https://")):
+            url = endpoint
+        elif endpoint == self._service_path or endpoint.startswith(
+            self._service_path + "/"
+        ):
+            parsed = urlparse(self.base_url)
+            url = urljoin(f"{parsed.scheme}://{parsed.netloc}", endpoint)
+        else:
+            url = urljoin(self.base_url + "/", endpoint.lstrip("/"))
+        if self._url_origin(url) != self._origin:
+            raise RedfishClientError(
+                f"Refusing off-origin Redfish URI: {url}"
+            )
+        return url
+
+    @staticmethod
+    def _url_origin(url: str) -> Tuple[str, str, int]:
+        parsed = urlparse(url)
+        default_port = 443 if parsed.scheme == "https" else 80
+        return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port or default_port
+
+    def _validate_response_size(self, response: requests.Response) -> None:
+        response_headers = getattr(response, "headers", {})
+        content_length = (
+            response_headers.get("Content-Length")
+            if isinstance(response_headers, Mapping)
+            else None
+        )
+        if content_length and int(content_length) > self.max_response_bytes:
+            raise RedfishClientError(
+                f"Response exceeds {self.max_response_bytes} byte limit"
+            )
+        content = getattr(response, "content", b"")
+        if isinstance(content, (bytes, bytearray)) and len(content) > self.max_response_bytes:
+            raise RedfishClientError(
+                f"Response exceeds {self.max_response_bytes} byte limit"
+            )
 
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """
@@ -106,7 +147,10 @@ class RedfishClient:
             RedfishServerError: For 5xx server errors
         """
         try:
+            self._validate_response_size(response)
             response.raise_for_status()
+            if response.status_code == 204 or not getattr(response, "content", True):
+                return {}
             return response.json()
         except requests.HTTPError as e:
             # Categorize errors by HTTP status code
@@ -156,14 +200,28 @@ class RedfishClient:
         """
         def _make_request():
             try:
-                response = self.session.request(
-                    method,
-                    url,
-                    timeout=self.timeout,
-                    verify=self.verify_ssl,
-                    **kwargs
-                )
-                return response
+                current_url = self._build_url(url)
+                for _ in range(4):
+                    response = self.session.request(
+                        method,
+                        current_url,
+                        timeout=self.timeout,
+                        verify=self.verify_ssl,
+                        allow_redirects=False,
+                        **kwargs
+                    )
+                    if response.status_code not in (301, 302, 303, 307, 308):
+                        return response
+                    location = response.headers.get("Location")
+                    if not location:
+                        return response
+                    redirected_url = urljoin(current_url, location)
+                    if self._url_origin(redirected_url) != self._origin:
+                        raise RedfishClientError(
+                            f"Refusing off-origin redirect to {redirected_url}"
+                        )
+                    current_url = redirected_url
+                raise RedfishClientError("Too many Redfish redirects")
             except requests.ConnectionError as e:
                 raise RedfishConnectionError(f"Connection failed to {url}: {e}") from e
             except requests.Timeout as e:
@@ -177,6 +235,24 @@ class RedfishClient:
         else:
             return _make_request()
 
+    def get_with_headers(
+        self, endpoint: str
+    ) -> Tuple[Dict[str, Any], Mapping[str, str], int]:
+        """GET a resource and retain headers needed for Redfish preconditions."""
+        url = self._build_url(endpoint)
+        logger.debug(f"GET request to {url}")
+
+        @retry_with_backoff(self.retry_config)
+        def _get_with_retry():
+            response = self._execute_request("GET", url)
+            result = self._handle_response(response)
+            return result, response.headers, response.status_code
+
+        if self.enable_retry:
+            return _get_with_retry()
+        response = self._execute_request("GET", url)
+        return self._handle_response(response), response.headers, response.status_code
+
     def get(self, endpoint: str) -> Dict[str, Any]:
         """
         Perform GET request to Redfish endpoint with resilience features.
@@ -187,29 +263,38 @@ class RedfishClient:
         Returns:
             JSON response data
         """
-        url = self._build_url(endpoint)
-        logger.debug(f"GET request to {url}")
-
-        @retry_with_backoff(self.retry_config)
-        def _get_with_retry():
-            response = self._execute_request('GET', url)
-            result = self._handle_response(response)
-            logger.debug(f"GET {url} successful")
-            return result
-
         try:
-            if self.enable_retry:
-                return _get_with_retry()
-            else:
-                response = self._execute_request('GET', url)
-                result = self._handle_response(response)
-                logger.debug(f"GET {url} successful")
-                return result
+            result, _, _ = self.get_with_headers(endpoint)
+            return result
         except Exception as e:
-            logger.error(f"GET {url} failed: {e}")
+            logger.error(f"GET {endpoint} failed: {e}")
             raise
 
-    def patch(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def patch_with_status(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        headers: Optional[Mapping[str, str]] = None,
+    ) -> Tuple[Dict[str, Any], int]:
+        """PATCH a resource and return its body and HTTP status."""
+        url = self._build_url(endpoint)
+
+        @retry_with_backoff(self.retry_config)
+        def _patch_with_retry():
+            response = self._execute_request("PATCH", url, json=data, headers=headers)
+            return self._handle_response(response), response.status_code
+
+        if self.enable_retry:
+            return _patch_with_retry()
+        response = self._execute_request("PATCH", url, json=data, headers=headers)
+        return self._handle_response(response), response.status_code
+
+    def patch(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        headers: Optional[Mapping[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Perform PATCH request to update Redfish resource with resilience features.
 
@@ -220,24 +305,27 @@ class RedfishClient:
         Returns:
             JSON response data (may be empty for 204 responses)
         """
+        result, _ = self.patch_with_status(endpoint, data, headers)
+        return result
+
+    def post_with_status(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Mapping[str, str]] = None,
+    ) -> Tuple[Dict[str, Any], int]:
+        """POST an action and return its body and HTTP status."""
         url = self._build_url(endpoint)
 
-        @retry_with_backoff(self.retry_config)
-        def _patch_with_retry():
-            response = self._execute_request('PATCH', url, json=data)
-            if response.status_code == 204:
-                return {}
-            return self._handle_response(response)
+        response = self._execute_request("POST", url, json=data, headers=headers)
+        return self._handle_response(response), response.status_code
 
-        if self.enable_retry:
-            return _patch_with_retry()
-        else:
-            response = self._execute_request('PATCH', url, json=data)
-            if response.status_code == 204:
-                return {}
-            return self._handle_response(response)
-
-    def post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def post(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Mapping[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Perform POST request to execute Redfish action with resilience features.
 
@@ -248,18 +336,8 @@ class RedfishClient:
         Returns:
             JSON response data
         """
-        url = self._build_url(endpoint)
-
-        @retry_with_backoff(self.retry_config)
-        def _post_with_retry():
-            response = self._execute_request('POST', url, json=data)
-            return self._handle_response(response)
-
-        if self.enable_retry:
-            return _post_with_retry()
-        else:
-            response = self._execute_request('POST', url, json=data)
-            return self._handle_response(response)
+        result, _ = self.post_with_status(endpoint, data, headers)
+        return result
 
     def list_endpoints(self) -> str:
         """
@@ -293,44 +371,3 @@ class RedfishClient:
             return str(data)
         except Exception as e:
             return f"Error querying endpoint {endpoint_url}: {e}"
-
-    def patch_resource(self, endpoint_url: str, patch_data: str) -> str:
-        """
-        Update a Redfish resource using PATCH.
-
-        Args:
-            endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems/1')
-            patch_data: JSON string of the properties to update
-
-        Returns:
-            Success/error message
-        """
-        try:
-            data = json.loads(patch_data)
-            result = self.patch(endpoint_url, data)
-            return f"Successfully updated resource at {self._build_url(endpoint_url)}"
-        except json.JSONDecodeError:
-            return "Invalid JSON in patch_data"
-        except Exception as e:
-            return f"Error updating resource {endpoint_url}: {e}"
-
-    def post_action(self, action_url: str, action_data: str) -> str:
-        """
-        Execute a Redfish action using POST.
-
-        Args:
-            action_url: The full URL of the action endpoint
-            action_data: JSON string of the action parameters
-
-        Returns:
-            Success/error message
-        """
-        try:
-            data = json.loads(action_data) if action_data else {}
-            result = self.post(action_url, data)
-            url = self._build_url(action_url)
-            return f"Successfully executed action at {url}. Status: {result.get('status', 'completed')}"
-        except json.JSONDecodeError:
-            return "Invalid JSON in action_data"
-        except Exception as e:
-            return f"Error executing action {action_url}: {e}"

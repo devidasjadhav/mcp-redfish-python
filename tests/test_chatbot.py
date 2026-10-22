@@ -1,64 +1,41 @@
-#!/usr/bin/env python3
+"""Chatbot dispatch tests with no live model or Redfish target."""
 
 import os
-import sys
+import unittest
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-# Set dummy API key for testing
 os.environ["ANTHROPIC_API_KEY"] = "dummy_key_for_testing"
+os.environ["CONTRACT_SQLITE_PATH"] = ":memory:"
 
-# Import after setting env
-from src.redfish_mcp.chatbot import model_with_tools, run_chatbot, HumanMessage, ToolMessage
-from src.redfish_mcp.redfish_tool import list_endpoints, get_endpoint_data
+from src.redfish_mcp import chatbot
 
-# Mock the model invoke to return test responses
-def mock_invoke(messages):
-    last_message = messages[-1]
-    if hasattr(last_message, 'content'):
-        content = last_message.content
-        if "list" in content.lower() and "endpoint" in content.lower():
-            return type('MockResponse', (), {
-                'content': "I'll list the available Redfish endpoints for you.",
-                'tool_calls': [{'name': 'list_endpoints', 'args': {}, 'id': 'test1'}]
-            })()
-        elif "mac" in content.lower():
-            return type('MockResponse', (), {
-                'content': "Let me check the MAC addresses.",
-                'tool_calls': [{'name': 'get_endpoint_data', 'args': {'endpoint_url': 'https://server1.example.com/redfish/v1'}, 'id': 'test2'}]
-            })()
-        else:
-            return type('MockResponse', (), {
-                'content': "Hello! I can help with Redfish server management. Try asking about endpoints or MAC addresses.",
-                'tool_calls': None
-            })()
-    else:
-        return type('MockResponse', (), {
-            'content': "Tool result processed.",
-            'tool_calls': None
-        })()
 
-# Patch the model
-with patch('src.redfish_mcp.chatbot.model_with_tools.invoke', side_effect=mock_invoke):
-    # Test inputs
-    test_inputs = [
-        "List the available Redfish endpoints",
-        "What are the MAC addresses?",
-        "quit"
-    ]
+class TestChatbot(unittest.TestCase):
+    def test_dispatches_fixed_tool_and_returns_response(self):
+        first = Mock(
+            content="Checking endpoints",
+            tool_calls=[{"name": "list_endpoints", "args": {}, "id": "call-1"}],
+        )
+        second = Mock(content="Endpoints checked", tool_calls=[])
+        model = Mock()
+        model.invoke.side_effect = [first, second]
+        tool = Mock()
+        tool.invoke.return_value = "Available endpoints"
 
-    # Simulate input
-    input_iter = iter(test_inputs)
-    with patch('builtins.input', lambda: next(input_iter)):
-        # Redirect stdout to capture output
-        old_stdout = sys.stdout
-        sys.stdout = captured_output = StringIO()
+        with patch.object(chatbot, "model_with_tools", model):
+            with patch.dict(
+                chatbot.TOOL_MAP, {"list_endpoints": tool}, clear=True
+            ):
+                with patch(
+                    "builtins.input", side_effect=["List endpoints", "quit"]
+                ):
+                    with patch("sys.stdout", new_callable=StringIO) as output:
+                        chatbot.run_chatbot()
 
-        try:
-            run_chatbot()
-        finally:
-            sys.stdout = old_stdout
+        tool.invoke.assert_called_once_with({})
+        self.assertIn("Endpoints checked", output.getvalue())
 
-    # Print captured output
-    print("Test Output:")
-    print(captured_output.getvalue())
+
+if __name__ == "__main__":
+    unittest.main()

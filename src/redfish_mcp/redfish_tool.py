@@ -2,23 +2,17 @@
 Redfish Tools - LangChain tools for Redfish operations
 """
 
-from langchain.tools import tool
-from .client import RedfishClient
-from .config import config
+from typing import Any, Dict, Optional
 
-# Create shared client instance with resilience features
-_client = RedfishClient(
-    base_url=config.REDFISH_BASE_URL,
-    timeout=config.REQUEST_TIMEOUT,
-    verify_ssl=config.VERIFY_SSL,
-    enable_retry=config.ENABLE_RETRY,
-    enable_circuit_breaker=config.ENABLE_CIRCUIT_BREAKER
-)
+from langchain.tools import tool
+from .capability_service import create_capability_service
+
+_service = create_capability_service()
 
 @tool
 def list_endpoints() -> str:
     """List available Redfish endpoints by querying the root service."""
-    return _client.list_endpoints()
+    return _service.list_endpoints()
 
 @tool
 def get_endpoint_data(endpoint_url: str) -> str:
@@ -27,24 +21,44 @@ def get_endpoint_data(endpoint_url: str) -> str:
     Args:
         endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems')
     """
-    return _client.get_endpoint_data(endpoint_url)
+    return _service.get_endpoint_data(endpoint_url)
 
 @tool
-def patch_resource(endpoint_url: str, patch_data: str) -> str:
-    """Update a Redfish resource using PATCH.
+def find_capabilities(
+    query: str, selector: Optional[Dict[str, str]] = None
+) -> str:
+    """Find writable properties/actions and matching resources.
 
     Args:
-        endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems/1')
-        patch_data: JSON string of the properties to update (e.g., '{"Description": "Updated"}')
+        query: Property or action name to find.
+        selector: Optional context filters such as Name, Id, endpoint, type,
+            interface kind, or ancestor path.
     """
-    return _client.patch_resource(endpoint_url, patch_data)
+    return _service.find_capabilities(query, selector)
 
 @tool
-def post_action(action_url: str, action_data: str) -> str:
-    """Execute a Redfish action using POST.
+def set_properties(
+    updates: Dict[str, Any],
+    selector: Optional[Dict[str, str]] = None,
+    candidate_id: Optional[str] = None,
+) -> str:
+    """Set properties using the learned contract; never construct raw PATCH.
 
     Args:
-        action_url: The full URL of the action endpoint (e.g., '/Systems/1/Actions/ComputerSystem.Reset')
-        action_data: JSON string of the action parameters (e.g., '{"ResetType": "GracefulRestart"}')
+        updates: Values keyed by writable property path.
+        selector: Contextual resource filters.
+        candidate_id: Candidate returned by an ambiguous result.
     """
-    return _client.post_action(action_url, action_data)
+    return _service.set_properties(updates, selector, candidate_id)
+
+@tool
+def invoke_action(
+    action_name: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    selector: Optional[Dict[str, str]] = None,
+    candidate_id: Optional[str] = None,
+) -> str:
+    """Invoke a contract-validated Redfish action."""
+    return _service.invoke_action(
+        action_name, arguments, selector, candidate_id
+    )

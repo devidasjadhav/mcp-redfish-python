@@ -60,6 +60,9 @@ coverage.xml
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+.redfish_contracts.sqlite3
+.redfish_contracts.sqlite3-shm
+.redfish_contracts.sqlite3-wal
 
 # Flask stuff:
 instance/

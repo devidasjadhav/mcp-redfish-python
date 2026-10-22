@@ -178,9 +178,11 @@ class TestRedfishClient(unittest.TestCase):
             "http://test-server/redfish/v1/Systems"
         )
         self.assertEqual(
-            self.client._build_url("http://external.com/test"),
-            "http://external.com/test"
+            self.client._build_url("/redfish/v1/Systems"),
+            "http://test-server/redfish/v1/Systems"
         )
+        with self.assertRaises(RedfishClientError):
+            self.client._build_url("http://external.com/test")
 
     @patch('requests.Session.request')
     def test_successful_get(self, mock_request):
@@ -217,6 +219,26 @@ class TestRedfishClient(unittest.TestCase):
 
         self.assertEqual(cm.exception.status_code, 500)
         self.assertIn("Server error", str(cm.exception))
+
+    @patch('requests.Session.request')
+    def test_off_origin_redirect_is_rejected(self, mock_request):
+        mock_response = Mock()
+        mock_response.status_code = 302
+        mock_response.headers = {"Location": "https://attacker.example/steal"}
+        mock_request.return_value = mock_response
+        with self.assertRaises(RedfishClientError):
+            self.client.get("/test")
+
+    @patch('requests.Session.request')
+    def test_oversized_response_is_rejected(self, mock_request):
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {"Content-Length": "5"}
+        mock_response.content = b"12345"
+        mock_request.return_value = mock_response
+        self.client.max_response_bytes = 4
+        with self.assertRaises(RedfishClientError):
+            self.client.get("/test")
 
 
 if __name__ == '__main__':

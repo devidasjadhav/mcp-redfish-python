@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+system_settings = {"IndicatorLED": "Off"}
 
 @app.route('/redfish/v1')
 def redfish_root():
@@ -36,22 +37,89 @@ def systems():
         ]
     })
 
-@app.route('/redfish/v1/Systems/1', methods=['GET', 'PATCH'])
+@app.route('/redfish/v1/Systems/1')
 def system1():
-    if request.method == 'PATCH':
-        # Simple mock: accept any patch and return success
-        return '', 204
-    return jsonify({
+    response = jsonify({
         "@odata.id": "/redfish/v1/Systems/1",
         "@odata.type": "#ComputerSystem.v1_0_0.ComputerSystem",
+        "@odata.etag": '"system-1"',
         "Id": "1",
         "Name": "Computer System",
         "SystemType": "Physical",
+        "IndicatorLED": system_settings["IndicatorLED"],
+        "IndicatorLED@Redfish.AllowableValues": ["Off", "Lit", "Blinking"],
+        "@Redfish.Settings": {
+            "SettingsObject": {
+                "@odata.id": "/redfish/v1/Systems/1/Settings"
+            },
+            "SupportedApplyTimes": ["Immediate", "OnReset"]
+        },
+        "Actions": {
+            "#ComputerSystem.Reset": {
+                "target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+                "@Redfish.ActionInfo": "/redfish/v1/Systems/1/ResetActionInfo"
+            }
+        },
         "Status": {
             "State": "Enabled",
             "Health": "OK"
         }
     })
+    response.headers["ETag"] = '"system-1"'
+    response.headers["Allow"] = "GET, PATCH"
+    return response
+
+
+@app.route('/redfish/v1/Systems/1/Settings', methods=['GET', 'PATCH'])
+def system1_settings():
+    if request.method == 'PATCH':
+        allowed = {"IndicatorLED", "@Redfish.SettingsApplyTime"}
+        if not set(request.json or {}).issubset(allowed):
+            return jsonify({"error": {"message": "Read-only property"}}), 400
+        if "IndicatorLED" in request.json:
+            system_settings["IndicatorLED"] = request.json["IndicatorLED"]
+        return "", 204
+    response = jsonify({
+        "@odata.id": "/redfish/v1/Systems/1/Settings",
+        "@odata.type": "#ComputerSystem.v1_0_0.ComputerSystem",
+        "@odata.etag": '"settings-1"',
+        "Id": "1",
+        "Name": "Pending Computer System Settings",
+        "IndicatorLED": system_settings["IndicatorLED"],
+        "IndicatorLED@Redfish.AllowableValues": ["Off", "Lit", "Blinking"],
+        "Status": {"State": "Enabled"}
+    })
+    response.headers["ETag"] = '"settings-1"'
+    response.headers["Allow"] = "GET, PATCH"
+    return response
+
+
+@app.route('/redfish/v1/Systems/1/ResetActionInfo')
+def reset_action_info():
+    return jsonify({
+        "@odata.id": "/redfish/v1/Systems/1/ResetActionInfo",
+        "@odata.type": "#ActionInfo.v1_0_0.ActionInfo",
+        "Id": "ResetActionInfo",
+        "Name": "Reset Action Info",
+        "Parameters": [{
+            "Name": "ResetType",
+            "Required": True,
+            "DataType": "String",
+            "AllowableValues": ["GracefulRestart", "ForceRestart"]
+        }]
+    })
+
+
+@app.route(
+    '/redfish/v1/Systems/1/Actions/ComputerSystem.Reset',
+    methods=['POST']
+)
+def reset_system():
+    if (request.json or {}).get("ResetType") not in (
+        "GracefulRestart", "ForceRestart"
+    ):
+        return jsonify({"error": {"message": "Invalid ResetType"}}), 400
+    return "", 204
 
 @app.route('/redfish/v1/Chassis')
 def chassis():
@@ -103,6 +171,7 @@ def manager1():
         "Id": "1",
         "Name": "Manager",
         "ManagerType": "BMC",
+        "FirmwareVersion": "1.0.0",
         "Status": {
             "State": "Enabled",
             "Health": "OK"

@@ -34,6 +34,27 @@ class Config:
         self.REDFISH_USERNAME: Optional[str] = os.getenv("REDFISH_USERNAME")
         self.REDFISH_PASSWORD: Optional[str] = os.getenv("REDFISH_PASSWORD")
 
+        # Learned contract settings
+        self.CONTRACT_SQLITE_PATH: str = os.getenv(
+            "CONTRACT_SQLITE_PATH", ".redfish_contracts.sqlite3"
+        )
+        self.REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
+        self.CONTRACT_PROBE_TTL_SECONDS: int = int(
+            os.getenv("CONTRACT_PROBE_TTL_SECONDS", "30")
+        )
+        self.CONTRACT_REFRESH_TTL_SECONDS: int = int(
+            os.getenv("CONTRACT_REFRESH_TTL_SECONDS", "300")
+        )
+        self.CANDIDATE_TTL_SECONDS: int = int(
+            os.getenv("CANDIDATE_TTL_SECONDS", "300")
+        )
+        self.EXPLORE_MAX_RESOURCES: int = int(
+            os.getenv("EXPLORE_MAX_RESOURCES", "200")
+        )
+        self.EXPLORE_MAX_DEPTH: int = int(os.getenv("EXPLORE_MAX_DEPTH", "8"))
+        self.EXPLORE_MAX_ACTIONS: int = int(os.getenv("EXPLORE_MAX_ACTIONS", "16"))
+        self.MAX_RESPONSE_BYTES: int = int(os.getenv("MAX_RESPONSE_BYTES", "1048576"))
+
         # Anthropic API settings
         self.ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
         self.ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
@@ -47,7 +68,7 @@ class Config:
         self.MCP_SERVER_VERSION: str = os.getenv("MCP_SERVER_VERSION", "1.0.0")
         self.MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT", "stdio")
 
-    def validate(self) -> List[str]:
+    def validate(self, require_anthropic: bool = True) -> List[str]:
         """
         Validate configuration and return list of error messages.
 
@@ -60,7 +81,7 @@ class Config:
         if not self.REDFISH_BASE_URL:
             errors.append("REDFISH_BASE_URL is required")
 
-        if not self.ANTHROPIC_API_KEY:
+        if require_anthropic and not self.ANTHROPIC_API_KEY:
             errors.append("ANTHROPIC_API_KEY is required for chatbot functionality")
 
         # Value validation
@@ -81,6 +102,27 @@ class Config:
 
         if self.CIRCUIT_BREAKER_TIMEOUT <= 0:
             errors.append("CIRCUIT_BREAKER_TIMEOUT must be positive")
+
+        if self.CONTRACT_PROBE_TTL_SECONDS < 0:
+            errors.append("CONTRACT_PROBE_TTL_SECONDS cannot be negative")
+
+        if self.CONTRACT_REFRESH_TTL_SECONDS <= 0:
+            errors.append("CONTRACT_REFRESH_TTL_SECONDS must be positive")
+
+        if self.CANDIDATE_TTL_SECONDS <= 0:
+            errors.append("CANDIDATE_TTL_SECONDS must be positive")
+
+        if self.EXPLORE_MAX_RESOURCES <= 0:
+            errors.append("EXPLORE_MAX_RESOURCES must be positive")
+
+        if self.EXPLORE_MAX_DEPTH <= 0:
+            errors.append("EXPLORE_MAX_DEPTH must be positive")
+
+        if self.EXPLORE_MAX_ACTIONS <= 0:
+            errors.append("EXPLORE_MAX_ACTIONS must be positive")
+
+        if self.MAX_RESPONSE_BYTES <= 0:
+            errors.append("MAX_RESPONSE_BYTES must be positive")
 
         # Log level validation
         valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]

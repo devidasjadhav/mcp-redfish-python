@@ -3,8 +3,10 @@ Redfish MCP Server - FastMCP server exposing Redfish tools
 """
 
 import sys
+from typing import Any, Dict, Optional
+
 from fastmcp import FastMCP
-from .client import RedfishClient
+from .capability_service import create_capability_service
 from .config import config
 from .logging_config import logger, reconfigure_logging_from_config
 
@@ -13,7 +15,7 @@ reconfigure_logging_from_config()
 
 # Validate configuration on startup
 logger.info("Validating configuration...")
-validation_errors = config.validate()
+validation_errors = config.validate(require_anthropic=False)
 if validation_errors:
     logger.error("Configuration validation failed:")
     for error in validation_errors:
@@ -26,19 +28,12 @@ logger.debug(f"Configuration: {config.to_dict()}")
 
 app = FastMCP(config.MCP_SERVER_NAME)
 
-# Create shared client instance with resilience features
-_client = RedfishClient(
-    base_url=config.REDFISH_BASE_URL,
-    timeout=config.REQUEST_TIMEOUT,
-    verify_ssl=config.VERIFY_SSL,
-    enable_retry=config.ENABLE_RETRY,
-    enable_circuit_breaker=config.ENABLE_CIRCUIT_BREAKER
-)
+_service = create_capability_service()
 
 @app.tool()
 def list_endpoints() -> str:
     """List available Redfish endpoints by querying the root service."""
-    return _client.list_endpoints()
+    return _service.list_endpoints()
 
 @app.tool()
 def get_endpoint_data(endpoint_url: str) -> str:
@@ -47,27 +42,47 @@ def get_endpoint_data(endpoint_url: str) -> str:
     Args:
         endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems')
     """
-    return _client.get_endpoint_data(endpoint_url)
+    return _service.get_endpoint_data(endpoint_url)
 
 @app.tool()
-def patch_resource(endpoint_url: str, patch_data: str) -> str:
-    """Update a Redfish resource using PATCH.
+def find_capabilities(
+    query: str, selector: Optional[Dict[str, str]] = None
+) -> str:
+    """Find writable Redfish properties or actions without exposing discovery state.
 
     Args:
-        endpoint_url: The relative path of the Redfish endpoint (e.g., '/Systems/1')
-        patch_data: JSON string of the properties to update (e.g., '{"Description": "Updated"}')
+        query: Property or action name to find.
+        selector: Optional contextual filters such as endpoint, resource_type,
+            Id, Name, interface_kind, or ancestor_path.
     """
-    return _client.patch_resource(endpoint_url, patch_data)
+    return _service.find_capabilities(query, selector)
 
 @app.tool()
-def post_action(action_url: str, action_data: str) -> str:
-    """Execute a Redfish action using POST.
+def set_properties(
+    updates: Dict[str, Any],
+    selector: Optional[Dict[str, str]] = None,
+    candidate_id: Optional[str] = None,
+) -> str:
+    """Set validated properties on one contract-resolved Redfish resource.
 
     Args:
-        action_url: The full URL of the action endpoint (e.g., '/Systems/1/Actions/ComputerSystem.Reset')
-        action_data: JSON string of the action parameters (e.g., '{"ResetType": "GracefulRestart"}')
+        updates: Values keyed by contract property paths.
+        selector: Contextual resource filters. Use conversation context first.
+        candidate_id: Candidate returned after unresolved ambiguity.
     """
-    return _client.post_action(action_url, action_data)
+    return _service.set_properties(updates, selector, candidate_id)
+
+@app.tool()
+def invoke_action(
+    action_name: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    selector: Optional[Dict[str, str]] = None,
+    candidate_id: Optional[str] = None,
+) -> str:
+    """Invoke a validated action on one contract-resolved Redfish resource."""
+    return _service.invoke_action(
+        action_name, arguments, selector, candidate_id
+    )
 
 if __name__ == "__main__":
     app.run()

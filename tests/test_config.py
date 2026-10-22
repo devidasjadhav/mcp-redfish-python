@@ -20,7 +20,11 @@ class TestConfig(unittest.TestCase):
         env_vars_to_clear = [
             'REDFISH_BASE_URL', 'REQUEST_TIMEOUT', 'VERIFY_SSL',
             'ENABLE_RETRY', 'ENABLE_CIRCUIT_BREAKER', 'ANTHROPIC_API_KEY',
-            'LOG_LEVEL', 'MCP_SERVER_NAME'
+            'LOG_LEVEL', 'MCP_SERVER_NAME', 'CONTRACT_SQLITE_PATH', 'REDIS_URL',
+            'CONTRACT_PROBE_TTL_SECONDS', 'CONTRACT_REFRESH_TTL_SECONDS',
+            'CANDIDATE_TTL_SECONDS',
+            'EXPLORE_MAX_RESOURCES', 'EXPLORE_MAX_DEPTH',
+            'EXPLORE_MAX_ACTIONS', 'MAX_RESPONSE_BYTES'
         ]
         for var in env_vars_to_clear:
             os.environ.pop(var, None)
@@ -39,6 +43,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.ANTHROPIC_MODEL, "claude-3-5-haiku-20241022")
         self.assertEqual(config.LOG_LEVEL, "INFO")
         self.assertEqual(config.MCP_SERVER_NAME, "Redfish MCP Server")
+        self.assertEqual(config.CONTRACT_SQLITE_PATH, ".redfish_contracts.sqlite3")
+        self.assertEqual(config.EXPLORE_MAX_RESOURCES, 200)
+        self.assertEqual(config.MAX_RESPONSE_BYTES, 1048576)
 
     def test_env_override(self):
         """Test environment variable overrides."""
@@ -85,8 +92,8 @@ class TestConfig(unittest.TestCase):
             'ANTHROPIC_API_KEY': 'test-key',
             'REQUEST_TIMEOUT': '-1',
             'MAX_RETRY_ATTEMPTS': '-5',
-            'RETRY_BASE_DELAY': '0',
-            'RETRY_MAX_DELAY': '0.5',  # Less than base delay
+            'RETRY_BASE_DELAY': '-1',
+            'RETRY_MAX_DELAY': '-2',  # Less than base delay
             'LOG_LEVEL': 'INVALID'
         }):
             config = Config()
@@ -96,7 +103,9 @@ class TestConfig(unittest.TestCase):
             self.assertIn("MAX_RETRY_ATTEMPTS cannot be negative", errors)
             self.assertIn("RETRY_BASE_DELAY must be positive", errors)
             self.assertIn("RETRY_MAX_DELAY must be greater than RETRY_BASE_DELAY", errors)
-            self.assertIn("LOG_LEVEL must be one of", errors)
+            self.assertTrue(
+                any(error.startswith("LOG_LEVEL must be one of") for error in errors)
+            )
 
     def test_to_dict_masks_sensitive_data(self):
         """Test that to_dict masks sensitive information."""
