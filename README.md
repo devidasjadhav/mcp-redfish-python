@@ -16,6 +16,11 @@ This project provides an AI-powered interface for managing Redfish-enabled serve
 1. **Set up Redfish Mock Server** (see [User Guide](#user-guide) for details)
 2. **Install dependencies** and set API key
 3. **Start MCP Server** and **run Chatbot**
+4. **Run tests** from the repository root (no environment variables required):
+
+   ```bash
+   pytest tests/
+   ```
 
 ## Project Structure
 
