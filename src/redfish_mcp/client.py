@@ -131,27 +131,24 @@ class RedfishClient:
                 f"Response exceeds {self.max_response_bytes} byte limit"
             )
 
-    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
+    def _check_response(self, response: requests.Response) -> None:
         """
-        Handle HTTP response with appropriate error checking and custom exceptions.
+        Check response size and status, raising categorized Redfish exceptions.
+
+        This runs inside the circuit breaker so HTTP error statuses (notably
+        5xx) are counted as failures.
 
         Args:
             response: HTTP response object
 
-        Returns:
-            Parsed JSON response
-
         Raises:
             RedfishAuthenticationError: For 401/403 responses
-            RedfishClientError: For 4xx client errors
+            RedfishClientError: For 4xx client errors or oversized responses
             RedfishServerError: For 5xx server errors
         """
         try:
             self._validate_response_size(response)
             response.raise_for_status()
-            if response.status_code == 204 or not getattr(response, "content", True):
-                return {}
-            return response.json()
         except requests.HTTPError as e:
             # Categorize errors by HTTP status code
             status_code = response.status_code
@@ -160,7 +157,7 @@ class RedfishClient:
             try:
                 error_data = response.json()
                 error_msg = error_data.get('error', {}).get('message', str(e))
-            except:
+            except Exception:
                 error_msg = str(e)
 
             # Raise appropriate custom exception
@@ -181,6 +178,26 @@ class RedfishClient:
                 ) from e
             else:
                 raise RedfishError(f"HTTP {status_code}: {error_msg}", status_code=status_code) from e
+
+    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
+        """
+        Handle HTTP response with appropriate error checking and custom exceptions.
+
+        Args:
+            response: HTTP response object
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            RedfishAuthenticationError: For 401/403 responses
+            RedfishClientError: For 4xx client errors
+            RedfishServerError: For 5xx server errors
+        """
+        self._check_response(response)
+        if response.status_code == 204 or not getattr(response, "content", True):
+            return {}
+        return response.json()
 
     def _execute_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
@@ -211,17 +228,21 @@ class RedfishClient:
                         **kwargs
                     )
                     if response.status_code not in (301, 302, 303, 307, 308):
-                        return response
+                        break
                     location = response.headers.get("Location")
                     if not location:
-                        return response
+                        break
                     redirected_url = urljoin(current_url, location)
                     if self._url_origin(redirected_url) != self._origin:
                         raise RedfishClientError(
                             f"Refusing off-origin redirect to {redirected_url}"
                         )
                     current_url = redirected_url
-                raise RedfishClientError("Too many Redfish redirects")
+                else:
+                    raise RedfishClientError("Too many Redfish redirects")
+                # Check the status inside the breaker so HTTP failures are counted.
+                self._check_response(response)
+                return response
             except requests.ConnectionError as e:
                 raise RedfishConnectionError(f"Connection failed to {url}: {e}") from e
             except requests.Timeout as e:
