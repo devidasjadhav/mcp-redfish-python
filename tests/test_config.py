@@ -65,6 +65,72 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(config.LOG_LEVEL, "DEBUG")
             self.assertEqual(config.MCP_SERVER_NAME, "Test Server")
 
+    def test_boolean_env_accepts_common_true_spellings(self):
+        """Common true spellings are parsed as enabled."""
+        for value in ('true', 'TRUE', '1', 'yes', 'on', ' On '):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {
+                    'VERIFY_SSL': value,
+                    'ENABLE_RETRY': value,
+                    'ENABLE_CIRCUIT_BREAKER': value,
+                }):
+                    config = Config()
+
+                self.assertTrue(config.VERIFY_SSL)
+                self.assertTrue(config.ENABLE_RETRY)
+                self.assertTrue(config.ENABLE_CIRCUIT_BREAKER)
+                self.assertEqual(config.validate(require_anthropic=False), [])
+
+    def test_boolean_env_accepts_common_false_spellings(self):
+        """Common false spellings are parsed as disabled."""
+        for value in ('false', 'FALSE', '0', 'no', 'off', ' Off '):
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {
+                    'VERIFY_SSL': value,
+                    'ENABLE_RETRY': value,
+                    'ENABLE_CIRCUIT_BREAKER': value,
+                }):
+                    config = Config()
+
+                self.assertFalse(config.VERIFY_SSL)
+                self.assertFalse(config.ENABLE_RETRY)
+                self.assertFalse(config.ENABLE_CIRCUIT_BREAKER)
+                self.assertEqual(config.validate(require_anthropic=False), [])
+
+    def test_verify_ssl_one_keeps_certificate_verification_enabled(self):
+        """Regression test for issue #16: VERIFY_SSL=1 must mean true."""
+        with patch.dict(os.environ, {'VERIFY_SSL': '1'}):
+            config = Config()
+
+        self.assertTrue(config.VERIFY_SSL)
+        self.assertEqual(config.validate(require_anthropic=False), [])
+
+    def test_invalid_boolean_settings_are_validation_errors(self):
+        """Unrecognized boolean values are reported instead of silently disabling settings."""
+        with patch.dict(os.environ, {
+            'VERIFY_SSL': 'ture',
+            'ENABLE_RETRY': 'maybe',
+            'ENABLE_CIRCUIT_BREAKER': '2',
+        }):
+            config = Config()
+
+        # An unrecognized VERIFY_SSL must never silently disable verification.
+        self.assertTrue(config.VERIFY_SSL)
+
+        errors = config.validate(require_anthropic=False)
+        self.assertIn(
+            "VERIFY_SSL must be one of: true, false, 1, 0, yes, no, on, off",
+            errors,
+        )
+        self.assertIn(
+            "ENABLE_RETRY must be one of: true, false, 1, 0, yes, no, on, off",
+            errors,
+        )
+        self.assertIn(
+            "ENABLE_CIRCUIT_BREAKER must be one of: true, false, 1, 0, yes, no, on, off",
+            errors,
+        )
+
     def test_validation_valid_config(self):
         """Test validation with valid configuration."""
         with patch.dict(os.environ, {
