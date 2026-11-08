@@ -3,7 +3,7 @@ Configuration management for Redfish MCP
 """
 
 import os
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from dotenv import load_dotenv
 
 
@@ -11,19 +11,55 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+TRUE_VALUES = {"true", "1", "yes", "on"}
+FALSE_VALUES = {"false", "0", "no", "off"}
+
+
+def parse_bool_env(name: str, default: bool) -> Tuple[bool, Optional[str]]:
+    """
+    Parse a boolean environment variable without silently disabling settings.
+
+    Accepted true values are ``true``, ``1``, ``yes`` and ``on``; accepted
+    false values are ``false``, ``0``, ``no`` and ``off``. Matching is
+    case-insensitive and ignores surrounding whitespace.
+
+    Args:
+        name: Environment variable name.
+        default: Value used when the variable is unset or unrecognized.
+
+    Returns:
+        Tuple of (parsed value, validation error or None).
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default, None
+
+    normalized = raw.strip().lower()
+    if normalized in TRUE_VALUES:
+        return True, None
+    if normalized in FALSE_VALUES:
+        return False, None
+
+    return default, (
+        f"{name} must be one of: true, false, 1, 0, yes, no, on, off"
+    )
+
+
 class Config:
     """Configuration settings loaded from environment variables and .env files."""
 
     def __init__(self):
         """Initialize configuration with current environment values."""
+        self._validation_errors: List[str] = []
+
         # Redfish server settings
         self.REDFISH_BASE_URL: str = os.getenv("REDFISH_BASE_URL", "http://127.0.0.1:8000/redfish/v1")
         self.REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "30"))
-        self.VERIFY_SSL: bool = os.getenv("VERIFY_SSL", "true").lower() == "true"
+        self.VERIFY_SSL: bool = self._bool_env("VERIFY_SSL", True)
 
         # Resilience settings
-        self.ENABLE_RETRY: bool = os.getenv("ENABLE_RETRY", "true").lower() == "true"
-        self.ENABLE_CIRCUIT_BREAKER: bool = os.getenv("ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
+        self.ENABLE_RETRY: bool = self._bool_env("ENABLE_RETRY", True)
+        self.ENABLE_CIRCUIT_BREAKER: bool = self._bool_env("ENABLE_CIRCUIT_BREAKER", True)
         self.MAX_RETRY_ATTEMPTS: int = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
         self.RETRY_BASE_DELAY: float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
         self.RETRY_MAX_DELAY: float = float(os.getenv("RETRY_MAX_DELAY", "30.0"))
@@ -68,6 +104,23 @@ class Config:
         self.MCP_SERVER_VERSION: str = os.getenv("MCP_SERVER_VERSION", "1.0.0")
         self.MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT", "stdio")
 
+    def _bool_env(self, name: str, default: bool) -> bool:
+        """
+        Read a boolean setting and remember any parsing error for validation.
+
+        Args:
+            name: Environment variable name.
+            default: Value used when the variable is unset or unrecognized.
+
+        Returns:
+            Parsed boolean value. Unrecognized values fall back to ``default``
+            rather than silently disabling the setting.
+        """
+        value, error = parse_bool_env(name, default)
+        if error is not None:
+            self._validation_errors.append(error)
+        return value
+
     def validate(self, require_anthropic: bool = True) -> List[str]:
         """
         Validate configuration and return list of error messages.
@@ -75,7 +128,7 @@ class Config:
         Returns:
             List of validation error messages (empty if valid)
         """
-        errors = []
+        errors = list(self._validation_errors)
 
         # Required settings
         if not self.REDFISH_BASE_URL:

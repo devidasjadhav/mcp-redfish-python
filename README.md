@@ -370,6 +370,8 @@ write audit records include the exact contract revision.
 
 The application validates configuration on startup and will exit with clear error messages if required settings are missing or invalid.
 
+Boolean settings accept `true`/`false`, `1`/`0`, `yes`/`no`, and `on`/`off` (case-insensitive). Any other value is a startup error, and an unrecognized `VERIFY_SSL` keeps certificate verification enabled rather than silently disabling it.
+
 #### Example .env file:
 ```bash
 # Redfish Server Configuration
