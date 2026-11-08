@@ -3,32 +3,41 @@ Configuration management for Redfish MCP
 """
 
 import os
-from typing import Optional, List
+from typing import Callable, Optional, List, TypeVar
 from dotenv import load_dotenv
 
 
 # Load .env file if it exists (before defining Config class)
 load_dotenv()
 
+Number = TypeVar("Number", int, float)
+
 
 class Config:
     """Configuration settings loaded from environment variables and .env files."""
 
     def __init__(self):
-        """Initialize configuration with current environment values."""
+        """Initialize configuration with current environment values.
+
+        Malformed numeric settings do not raise here. They are recorded so that
+        :meth:`validate` can report them, and the documented default is used.
+        """
+        # Errors for numeric settings that could not be parsed
+        self._parse_errors: List[str] = []
+
         # Redfish server settings
         self.REDFISH_BASE_URL: str = os.getenv("REDFISH_BASE_URL", "http://127.0.0.1:8000/redfish/v1")
-        self.REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "30"))
+        self.REQUEST_TIMEOUT: int = self._int_env("REQUEST_TIMEOUT", 30)
         self.VERIFY_SSL: bool = os.getenv("VERIFY_SSL", "true").lower() == "true"
 
         # Resilience settings
         self.ENABLE_RETRY: bool = os.getenv("ENABLE_RETRY", "true").lower() == "true"
         self.ENABLE_CIRCUIT_BREAKER: bool = os.getenv("ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
-        self.MAX_RETRY_ATTEMPTS: int = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
-        self.RETRY_BASE_DELAY: float = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
-        self.RETRY_MAX_DELAY: float = float(os.getenv("RETRY_MAX_DELAY", "30.0"))
-        self.CIRCUIT_BREAKER_THRESHOLD: int = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))
-        self.CIRCUIT_BREAKER_TIMEOUT: float = float(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60.0"))
+        self.MAX_RETRY_ATTEMPTS: int = self._int_env("MAX_RETRY_ATTEMPTS", 3)
+        self.RETRY_BASE_DELAY: float = self._float_env("RETRY_BASE_DELAY", 1.0)
+        self.RETRY_MAX_DELAY: float = self._float_env("RETRY_MAX_DELAY", 30.0)
+        self.CIRCUIT_BREAKER_THRESHOLD: int = self._int_env("CIRCUIT_BREAKER_THRESHOLD", 5)
+        self.CIRCUIT_BREAKER_TIMEOUT: float = self._float_env("CIRCUIT_BREAKER_TIMEOUT", 60.0)
 
         # Authentication (future enhancement)
         self.REDFISH_USERNAME: Optional[str] = os.getenv("REDFISH_USERNAME")
@@ -39,21 +48,21 @@ class Config:
             "CONTRACT_SQLITE_PATH", ".redfish_contracts.sqlite3"
         )
         self.REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
-        self.CONTRACT_PROBE_TTL_SECONDS: int = int(
-            os.getenv("CONTRACT_PROBE_TTL_SECONDS", "30")
+        self.CONTRACT_PROBE_TTL_SECONDS: int = self._int_env(
+            "CONTRACT_PROBE_TTL_SECONDS", 30
         )
-        self.CONTRACT_REFRESH_TTL_SECONDS: int = int(
-            os.getenv("CONTRACT_REFRESH_TTL_SECONDS", "300")
+        self.CONTRACT_REFRESH_TTL_SECONDS: int = self._int_env(
+            "CONTRACT_REFRESH_TTL_SECONDS", 300
         )
-        self.CANDIDATE_TTL_SECONDS: int = int(
-            os.getenv("CANDIDATE_TTL_SECONDS", "300")
+        self.CANDIDATE_TTL_SECONDS: int = self._int_env(
+            "CANDIDATE_TTL_SECONDS", 300
         )
-        self.EXPLORE_MAX_RESOURCES: int = int(
-            os.getenv("EXPLORE_MAX_RESOURCES", "200")
+        self.EXPLORE_MAX_RESOURCES: int = self._int_env(
+            "EXPLORE_MAX_RESOURCES", 200
         )
-        self.EXPLORE_MAX_DEPTH: int = int(os.getenv("EXPLORE_MAX_DEPTH", "8"))
-        self.EXPLORE_MAX_ACTIONS: int = int(os.getenv("EXPLORE_MAX_ACTIONS", "16"))
-        self.MAX_RESPONSE_BYTES: int = int(os.getenv("MAX_RESPONSE_BYTES", "1048576"))
+        self.EXPLORE_MAX_DEPTH: int = self._int_env("EXPLORE_MAX_DEPTH", 8)
+        self.EXPLORE_MAX_ACTIONS: int = self._int_env("EXPLORE_MAX_ACTIONS", 16)
+        self.MAX_RESPONSE_BYTES: int = self._int_env("MAX_RESPONSE_BYTES", 1048576)
 
         # Anthropic API settings
         self.ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
@@ -68,6 +77,35 @@ class Config:
         self.MCP_SERVER_VERSION: str = os.getenv("MCP_SERVER_VERSION", "1.0.0")
         self.MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT", "stdio")
 
+    def _int_env(self, name: str, default: int) -> int:
+        """Return an integer setting, recording a parse error instead of raising."""
+        return self._number_env(name, default, int, "an integer")
+
+    def _float_env(self, name: str, default: float) -> float:
+        """Return a float setting, recording a parse error instead of raising."""
+        return self._number_env(name, default, float, "a number")
+
+    def _number_env(
+        self,
+        name: str,
+        default: Number,
+        cast: Callable[[str], Number],
+        kind: str,
+    ) -> Number:
+        """Parse a numeric environment variable, falling back to ``default``.
+
+        A malformed value is appended to ``_parse_errors`` (reported by
+        :meth:`validate`) rather than raising during construction.
+        """
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            self._parse_errors.append(f"{name} must be {kind}, got {raw!r}")
+            return default
+
     def validate(self, require_anthropic: bool = True) -> List[str]:
         """
         Validate configuration and return list of error messages.
@@ -75,7 +113,7 @@ class Config:
         Returns:
             List of validation error messages (empty if valid)
         """
-        errors = []
+        errors = list(self._parse_errors)
 
         # Required settings
         if not self.REDFISH_BASE_URL:
