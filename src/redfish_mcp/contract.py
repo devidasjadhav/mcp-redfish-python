@@ -14,7 +14,7 @@ from .exceptions import RedfishError
 from .store import ContractConflictError, ContractStore
 
 
-CONTRACT_FORMAT_VERSION = 1
+CONTRACT_FORMAT_VERSION = 2
 READ_ONLY_PROPERTIES = {
     "@odata.context",
     "@odata.etag",
@@ -68,8 +68,9 @@ class ContractResolver:
         self.max_actions = max_actions
         self._cached_context: Optional[TargetContext] = None
         self._probe_time = 0.0
+        self._probe_was_live = False
         self._schema_cache: Dict[str, Dict[str, Any]] = {}
-        self._schema_etags: Set[str] = set()
+        self._schema_etags: Dict[str, str] = {}
 
     def find_capabilities(
         self, query: str, selector: Optional[Mapping[str, str]] = None
@@ -177,6 +178,7 @@ class ContractResolver:
             and self._cached_context
             and now - self._probe_time < self.probe_ttl_seconds
         ):
+            self._probe_was_live = False
             return self._cached_context
         root = self.client.get("")
         service_uuid = str(
@@ -193,6 +195,7 @@ class ContractResolver:
         context = TargetContext(key, service_uuid, role, generation, root)
         self._cached_context = context
         self._probe_time = now
+        self._probe_was_live = True
         return context
 
     def _resolve_role(self, root: Mapping[str, Any]) -> str:
@@ -233,6 +236,7 @@ class ContractResolver:
         self, force_probe: bool = False
     ) -> Tuple[TargetContext, Dict[str, Any]]:
         context = self._probe(force_probe)
+        probed_live = self._probe_was_live
         contract = self.store.get(context.key)
         incompatible = contract and contract.get("format_version") != CONTRACT_FORMAT_VERSION
         stale_topology = (
@@ -241,10 +245,21 @@ class ContractResolver:
             and time.time() - float(contract.get("explored_at", 0))
             >= self.topology_ttl_seconds
         )
+        stale_generation = (
+            contract is not None
+            and contract.get("generation") != context.generation
+        )
+        stale_fingerprint = (
+            contract is not None
+            and probed_live
+            and not (incompatible or stale_topology or stale_generation)
+            and self._schema_fingerprint_changed(contract)
+        )
         if contract and (
             incompatible
             or stale_topology
-            or contract.get("generation") != context.generation
+            or stale_generation
+            or stale_fingerprint
         ):
             self._invalidate(context.key)
             contract = None
@@ -256,6 +271,8 @@ class ContractResolver:
                 "target": context.service_uuid,
                 "role": context.role,
                 "generation": context.generation,
+                "schema_etags": {},
+                "schema_fingerprint": self._schema_fingerprint([], {}),
                 "resources": {},
                 "visited": [],
                 "frontier": [
@@ -278,6 +295,7 @@ class ContractResolver:
         resources = contract.setdefault("resources", {})
         exploration_errors = contract.setdefault("exploration_errors", [])
         incomplete = contract.setdefault("incomplete", [])
+        self._schema_etags.update(contract.get("schema_etags") or {})
         if not frontier:
             return contract, not incomplete
         while frontier and explored < self.max_resources:
@@ -315,8 +333,9 @@ class ContractResolver:
             )
         contract["visited"] = sorted(visited)
         contract["frontier"] = frontier
+        contract["schema_etags"] = dict(sorted(self._schema_etags.items()))
         contract["schema_fingerprint"] = self._schema_fingerprint(
-            resources.values(), self._schema_etags
+            resources.values(), contract["schema_etags"]
         )
         if not frontier:
             contract["explored_at"] = time.time()
@@ -420,7 +439,7 @@ class ContractResolver:
                     schema, headers, _ = self.client.get_with_headers(uri)
                     etag = self._header(headers, "ETag") or schema.get("@odata.etag")
                     if etag:
-                        self._schema_etags.add(str(etag))
+                        self._schema_etags[str(uri)] = str(etag)
                     writable = self._writable_from_json_schema(
                         schema, resource_name
                     )
@@ -995,15 +1014,67 @@ class ContractResolver:
             return "ethernet"
         return None
 
+    def _schema_fingerprint_changed(self, contract: Mapping[str, Any]) -> bool:
+        stored_fingerprint = contract.get("schema_fingerprint")
+        if not stored_fingerprint:
+            return True
+        current_etags = self._live_schema_etags(contract)
+        if current_etags is None:
+            return True
+        live_resources = self._live_resources(contract)
+        if live_resources is None:
+            return True
+        return self._schema_fingerprint(
+            live_resources, current_etags
+        ) != str(stored_fingerprint)
+
+    def _live_schema_etags(
+        self, contract: Mapping[str, Any]
+    ) -> Optional[Dict[str, str]]:
+        """Re-read every recorded schema and return its current ETag."""
+        current: Dict[str, str] = {}
+        for uri in contract.get("schema_etags") or {}:
+            try:
+                payload, headers, _ = self.client.get_with_headers(str(uri))
+                etag = self._header(headers, "ETag") or payload.get("@odata.etag")
+            except (AttributeError, TypeError, ValueError, RedfishError):
+                return None
+            if not etag:
+                return None
+            current[str(uri)] = str(etag)
+        return current
+
+    def _live_resources(
+        self, contract: Mapping[str, Any]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Re-read every recorded resource and return its current type."""
+        live: List[Dict[str, Any]] = []
+        for resource in (contract.get("resources") or {}).values():
+            uri = str(resource.get("uri") or "")
+            if not uri:
+                return None
+            try:
+                payload, _, _ = self.client.get_with_headers(uri)
+            except (AttributeError, TypeError, ValueError, RedfishError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            live.append({"odata_type": payload.get("@odata.type")})
+        return live
+
     @staticmethod
     def _schema_fingerprint(
-        resources: Iterable[Mapping[str, Any]], schema_etags: Iterable[str]
+        resources: Iterable[Mapping[str, Any]],
+        schema_etags: Mapping[str, str],
     ) -> str:
         types = sorted(
             str(resource.get("odata_type"))
             for resource in resources
             if resource.get("odata_type")
         )
-        material = types + sorted(schema_etags)
+        etags = sorted(
+            f"{uri}={etag}" for uri, etag in dict(schema_etags).items()
+        )
+        material = types + etags
         return hashlib.sha256("|".join(material).encode()).hexdigest()
 

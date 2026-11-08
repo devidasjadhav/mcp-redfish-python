@@ -253,6 +253,8 @@ class TestSQLiteContractStore(unittest.TestCase):
 
 
 class TestContractResolver(unittest.TestCase):
+    SCHEMA_URI = "/redfish/v1/Schemas/EthernetInterface.v1_0_0.json"
+
     def setUp(self):
         self.client = FakeRedfishClient()
         self.store = SQLiteContractStore(":memory:")
@@ -414,6 +416,140 @@ class TestContractResolver(unittest.TestCase):
         self.assertEqual(current["generation"]["firmware"]["1"], "2.0.0")
         self.assertGreaterEqual(first_revision, 1)
 
+    def _enable_json_schemas(self) -> None:
+        self.client.resources["/redfish/v1"]["JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas"
+        }
+        self.client.resources["/redfish/v1/JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas",
+            "@odata.type": "#JsonSchemaFileCollection.JsonSchemaFileCollection",
+            "Members": [
+                {"@odata.id": "/redfish/v1/JsonSchemas/EthernetInterface"}
+            ],
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/EthernetInterface"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas/EthernetInterface",
+            "@odata.type": "#JsonSchemaFile.v1_0_0.JsonSchemaFile",
+            "Schema": "EthernetInterface",
+            "Location": [{"Uri": self.SCHEMA_URI}],
+        }
+        self.client.resources[self.SCHEMA_URI] = {
+            "@odata.etag": '"schema-1"',
+            "definitions": {
+                "EthernetInterface": {
+                    "properties": {
+                        "IPAddress": {"type": "string", "readonly": False},
+                        "Name": {"type": "string", "readonly": True},
+                    }
+                }
+            },
+        }
+
+    def _use_schema_writable_for_wireless(self) -> None:
+        self._enable_json_schemas()
+        del self.client.resources["/redfish/v1/Systems/Wireless"][
+            "IPAddress@Redfish.AllowableValues"
+        ]
+
+    def test_schema_etags_are_persisted_with_the_contract(self):
+        self._use_schema_writable_for_wireless()
+        result = self.resolver.find_capabilities("IPAddress", {"Id": "Wireless"})
+        self.assertEqual(result["status"], "ok")
+        contract = self.store.get("target-1:anonymous")
+        self.assertEqual(
+            contract["schema_etags"], {self.SCHEMA_URI: '"schema-1"'}
+        )
+        self.assertEqual(
+            contract["schema_fingerprint"],
+            ContractResolver._schema_fingerprint(
+                contract["resources"].values(), contract["schema_etags"]
+            ),
+        )
+
+    def test_persisted_schema_fingerprint_is_stable_across_resolvers(self):
+        self._use_schema_writable_for_wireless()
+        self.resolver.find_capabilities("IPAddress", {"Id": "Wireless"})
+        first = self.store.get("target-1:anonymous")
+        restarted = ContractResolver(
+            self.client,
+            self.store,
+            probe_ttl_seconds=0,
+            max_resources=50,
+        )
+        result = restarted.find_capabilities("IPAddress", {"Id": "Wireless"})
+        self.assertEqual(result["status"], "ok")
+        current = self.store.get("target-1:anonymous")
+        self.assertEqual(current["revision"], first["revision"])
+
+    def test_changed_schema_etag_invalidates_contract_and_reexplores(self):
+        self._use_schema_writable_for_wireless()
+        self.resolver.find_capabilities("IPAddress", {"Id": "Wireless"})
+        first = self.store.get("target-1:anonymous")
+        self.client.resources[self.SCHEMA_URI]["@odata.etag"] = '"schema-2"'
+        result = self.resolver.set_properties(
+            {"IPAddress": "192.0.2.2"}, {"Id": "Wireless"}
+        )
+        self.assertEqual(result["status"], "updated")
+        current = self.store.get("target-1:anonymous")
+        self.assertGreater(current["revision"], first["revision"])
+        self.assertEqual(
+            current["schema_etags"], {self.SCHEMA_URI: '"schema-2"'}
+        )
+        self.assertGreaterEqual(first["revision"], 1)
+
+    def test_schema_fingerprint_covers_types_and_etags(self):
+        base = ContractResolver._schema_fingerprint(
+            [{"odata_type": "#A.v1_0_0.A"}], {self.SCHEMA_URI: '"one"'}
+        )
+        self.assertNotEqual(
+            base,
+            ContractResolver._schema_fingerprint(
+                [{"odata_type": "#B.v1_0_0.B"}], {self.SCHEMA_URI: '"one"'}
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            ContractResolver._schema_fingerprint(
+                [{"odata_type": "#A.v1_0_0.A"}], {self.SCHEMA_URI: '"two"'}
+            ),
+        )
+
+    def test_live_odata_type_change_invalidates_contract(self):
+        self.resolver.find_capabilities("IPAddress")
+        first = self.store.get("target-1:anonymous")
+        new_type = "#EthernetInterface.v9_0_0.EthernetInterface"
+        self.client.resources["/redfish/v1/Systems/Wired"]["@odata.type"] = (
+            new_type
+        )
+        result = self.resolver.set_properties(
+            {"IPAddress": "192.0.2.2"}, {"Id": "Wired"}
+        )
+        self.assertEqual(result["status"], "updated")
+        current = self.store.get("target-1:anonymous")
+        self.assertGreater(current["revision"], first["revision"])
+        wired = next(
+            resource
+            for resource in current["resources"].values()
+            if resource["uri"] == "/redfish/v1/Systems/Wired"
+        )
+        self.assertEqual(wired["odata_type"], new_type)
+
+    def test_legacy_contract_without_schema_fields_is_rebuilt(self):
+        self.resolver.find_capabilities("IPAddress")
+        legacy = self.store.get("target-1:anonymous")
+        legacy.pop("schema_etags")
+        legacy.pop("schema_fingerprint")
+        legacy["format_version"] = 1
+        legacy_revision = self.store.put(
+            "target-1:anonymous", legacy, legacy["revision"]
+        )
+        self.resolver.find_capabilities("IPAddress")
+        current = self.store.get("target-1:anonymous")
+        self.assertEqual(current["format_version"], 2)
+        self.assertIn("schema_etags", current)
+        self.assertIn("schema_fingerprint", current)
+        self.assertGreater(current["revision"], legacy_revision)
+
     def test_incompatible_contract_format_is_rebuilt(self):
         self.store.put(
             "target-1:anonymous",
@@ -428,7 +564,7 @@ class TestContractResolver(unittest.TestCase):
         )
         self.resolver.find_capabilities("IPAddress")
         current = self.store.get("target-1:anonymous")
-        self.assertEqual(current["format_version"], 1)
+        self.assertEqual(current["format_version"], 2)
         self.assertGreater(current["revision"], 1)
 
     def test_roles_have_separate_contract_keys(self):
