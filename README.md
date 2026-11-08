@@ -269,7 +269,7 @@ Each resource section records:
 - Writable properties from the first published allowlist: `@Redfish.AllowableValues` or `@Redfish.WriteableProperties`, then JSON Schema properties explicitly marked writable, then the same sources on the Settings object. A Settings leaf is not assumed writable merely because it appears in the Settings document. If no source publishes an allowlist, writes to that resource are refused.
 - Actions from the `Actions` object. Parameter names, types, required flags, and allowable values come only from ActionInfo. Absent ActionInfo accepts an empty body and rejects named arguments. A failed or budget-limited ActionInfo lookup rejects the action.
 
-Before use, the resolver compares the stored generation with a live probe: service `UUID`, `RedfishVersion`, each Manager `FirmwareVersion`, and a fingerprint of observed `@odata.type` values plus JSON Schema ETags that were actually fetched. Those ETags are persisted per schema URI with the contract, so the fingerprint is stable across processes, and a live probe re-reads each recorded schema before reuse. A generation or fingerprint change, an incompatible contract format, or an expired topology deletes that role's contract and explores again. Audit rows remain.
+On a live probe, the resolver compares the stored generation with a live probe: service `UUID`, `RedfishVersion`, and each Manager `FirmwareVersion`. It also re-reads every recorded resource and JSON Schema document, then compares the stored fingerprint of their `@odata.type` values and fetched JSON Schema ETags with the live values. Those ETags are persisted per schema URI with the contract, so the fingerprint is stable across processes. A generation or fingerprint change, an incompatible contract format, or an expired topology deletes that role's contract and explores again. Audit rows remain.
 
 Immediately before PATCH or POST, the server GETs the write target again. It sends `If-Match` from that response's `ETag` header or `@odata.etag`. A missing fresh ETag or a changed `@odata.type` stops the write. The precondition is not stored in the contract. The response includes `contract_revision` and `audit_id`. The audit record contains the timestamp, service UUID, role, revision, operation, URI, SHA-256 of the built body, and HTTP status.
 
@@ -284,7 +284,7 @@ Immediately before PATCH or POST, the server GETs the write target again. It sen
 - The default is a SQLite file at `CONTRACT_SQLITE_PATH`, using WAL mode and `BEGIN IMMEDIATE` around each revision update. Processes on one host can share the file.
 - `REDIS_URL` selects Redis. The revision update runs in one Lua script so two instances cannot overwrite each other. Startup fails with a configuration error when that URL is set and Redis cannot be imported or reached.
 
-There is no public refresh or cache tool. A short process-local probe cache (`CONTRACT_PROBE_TTL_SECONDS`, default 30) is only a hint and is always compared with the stored generation and schema fingerprint.
+There is no public refresh or cache tool. A short process-local probe cache (`CONTRACT_PROBE_TTL_SECONDS`, default 30) is only a hint: the stored generation is always compared, and the schema/`@odata.type` fingerprint is re-read on every live probe. A read may reuse the cached probe within that TTL; writes force a live probe.
 
 ### Target protection
 

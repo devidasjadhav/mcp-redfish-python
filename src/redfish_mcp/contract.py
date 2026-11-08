@@ -14,7 +14,7 @@ from .exceptions import RedfishError
 from .store import ContractConflictError, ContractStore
 
 
-CONTRACT_FORMAT_VERSION = 1
+CONTRACT_FORMAT_VERSION = 2
 READ_ONLY_PROPERTIES = {
     "@odata.context",
     "@odata.etag",
@@ -1015,25 +1015,52 @@ class ContractResolver:
         return None
 
     def _schema_fingerprint_changed(self, contract: Mapping[str, Any]) -> bool:
-        stored_etags = contract.get("schema_etags") or {}
-        if not stored_etags:
-            return False
         stored_fingerprint = contract.get("schema_fingerprint")
         if not stored_fingerprint:
             return True
-        current_etags: Dict[str, str] = {}
-        for uri in stored_etags:
+        current_etags = self._live_schema_etags(contract)
+        if current_etags is None:
+            return True
+        live_resources = self._live_resources(contract)
+        if live_resources is None:
+            return True
+        return self._schema_fingerprint(
+            live_resources, current_etags
+        ) != str(stored_fingerprint)
+
+    def _live_schema_etags(
+        self, contract: Mapping[str, Any]
+    ) -> Optional[Dict[str, str]]:
+        """Re-read every recorded schema and return its current ETag."""
+        current: Dict[str, str] = {}
+        for uri in contract.get("schema_etags") or {}:
             try:
                 payload, headers, _ = self.client.get_with_headers(str(uri))
                 etag = self._header(headers, "ETag") or payload.get("@odata.etag")
             except (AttributeError, TypeError, ValueError, RedfishError):
-                return True
+                return None
             if not etag:
-                return True
-            current_etags[str(uri)] = str(etag)
-        return self._schema_fingerprint(
-            contract.get("resources", {}).values(), current_etags
-        ) != str(stored_fingerprint)
+                return None
+            current[str(uri)] = str(etag)
+        return current
+
+    def _live_resources(
+        self, contract: Mapping[str, Any]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Re-read every recorded resource and return its current type."""
+        live: List[Dict[str, Any]] = []
+        for resource in (contract.get("resources") or {}).values():
+            uri = str(resource.get("uri") or "")
+            if not uri:
+                return None
+            try:
+                payload, _, _ = self.client.get_with_headers(uri)
+            except (AttributeError, TypeError, ValueError, RedfishError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            live.append({"odata_type": payload.get("@odata.type")})
+        return live
 
     @staticmethod
     def _schema_fingerprint(

@@ -514,6 +514,42 @@ class TestContractResolver(unittest.TestCase):
             ),
         )
 
+    def test_live_odata_type_change_invalidates_contract(self):
+        self.resolver.find_capabilities("IPAddress")
+        first = self.store.get("target-1:anonymous")
+        new_type = "#EthernetInterface.v9_0_0.EthernetInterface"
+        self.client.resources["/redfish/v1/Systems/Wired"]["@odata.type"] = (
+            new_type
+        )
+        result = self.resolver.set_properties(
+            {"IPAddress": "192.0.2.2"}, {"Id": "Wired"}
+        )
+        self.assertEqual(result["status"], "updated")
+        current = self.store.get("target-1:anonymous")
+        self.assertGreater(current["revision"], first["revision"])
+        wired = next(
+            resource
+            for resource in current["resources"].values()
+            if resource["uri"] == "/redfish/v1/Systems/Wired"
+        )
+        self.assertEqual(wired["odata_type"], new_type)
+
+    def test_legacy_contract_without_schema_fields_is_rebuilt(self):
+        self.resolver.find_capabilities("IPAddress")
+        legacy = self.store.get("target-1:anonymous")
+        legacy.pop("schema_etags")
+        legacy.pop("schema_fingerprint")
+        legacy["format_version"] = 1
+        legacy_revision = self.store.put(
+            "target-1:anonymous", legacy, legacy["revision"]
+        )
+        self.resolver.find_capabilities("IPAddress")
+        current = self.store.get("target-1:anonymous")
+        self.assertEqual(current["format_version"], 2)
+        self.assertIn("schema_etags", current)
+        self.assertIn("schema_fingerprint", current)
+        self.assertGreater(current["revision"], legacy_revision)
+
     def test_incompatible_contract_format_is_rebuilt(self):
         self.store.put(
             "target-1:anonymous",
@@ -528,7 +564,7 @@ class TestContractResolver(unittest.TestCase):
         )
         self.resolver.find_capabilities("IPAddress")
         current = self.store.get("target-1:anonymous")
-        self.assertEqual(current["format_version"], 1)
+        self.assertEqual(current["format_version"], 2)
         self.assertGreater(current["revision"], 1)
 
     def test_roles_have_separate_contract_keys(self):
