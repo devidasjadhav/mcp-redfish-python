@@ -1,5 +1,5 @@
-import os
-import getpass
+"""Interactive LangChain chatbot for Redfish server management."""
+
 from langchain_anthropic import ChatAnthropic
 from langchain.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from .redfish_tool import (
@@ -11,13 +11,6 @@ from .redfish_tool import (
 )
 from .config import config
 
-# Set API key if not already set
-if not config.ANTHROPIC_API_KEY:
-    config.ANTHROPIC_API_KEY = getpass.getpass("Enter your Anthropic API key: ")
-    os.environ["ANTHROPIC_API_KEY"] = config.ANTHROPIC_API_KEY
-
-# Instantiate model with tools
-model = ChatAnthropic(model=config.ANTHROPIC_MODEL)
 TOOLS = [
     list_endpoints,
     get_endpoint_data,
@@ -26,9 +19,34 @@ TOOLS = [
     invoke_action,
 ]
 TOOL_MAP = {item.name: item for item in TOOLS}
-model_with_tools = model.bind_tools(TOOLS)
+
+
+def _build_model_with_tools():
+    """Create the Anthropic model and bind the Redfish tools.
+
+    The model is built on demand so importing this module never requires an
+    API key (for example while collecting tests) and never prompts for one.
+
+    Returns:
+        A LangChain chat model with the Redfish tools bound.
+
+    Raises:
+        ValueError: If the configuration is invalid, including when
+            ANTHROPIC_API_KEY is missing.
+    """
+    errors = config.validate()
+    if errors:
+        raise ValueError("Invalid configuration: " + "; ".join(errors))
+    model = ChatAnthropic(
+        model=config.ANTHROPIC_MODEL,
+        api_key=config.ANTHROPIC_API_KEY,
+    )
+    return model.bind_tools(TOOLS)
+
 
 def run_chatbot():
+    model_with_tools = _build_model_with_tools()
+
     # Chat loop
     messages = []
     messages.append(SystemMessage(content=(
@@ -72,4 +90,7 @@ def run_chatbot():
         print("Bot:", response.content)
 
 if __name__ == "__main__":
-    run_chatbot()
+    try:
+        run_chatbot()
+    except ValueError as error:
+        raise SystemExit(f"Configuration error: {error}") from error
