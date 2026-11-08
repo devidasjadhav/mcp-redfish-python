@@ -4,21 +4,27 @@ Logging configuration for Redfish MCP
 
 import logging
 import sys
-from typing import Optional
+from typing import Optional, TextIO
 
 
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[str] = None,
-    format_string: Optional[str] = None
+    format_string: Optional[str] = None,
+    console_stream: Optional[TextIO] = None
 ) -> logging.Logger:
     """
     Set up logging configuration for the application.
+
+    The MCP stdio transport reserves stdout for JSON-RPC messages, so
+    console logging defaults to stderr.
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional log file path
         format_string: Optional custom format string
+        console_stream: Optional stream for console output (defaults to
+            stderr, keeping stdout free for MCP framing)
 
     Returns:
         Configured logger instance
@@ -41,8 +47,10 @@ def setup_logging(
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Console handler (stderr by default so stdout stays clean for MCP)
+    console_handler = logging.StreamHandler(
+        console_stream if console_stream is not None else sys.stderr
+    )
     console_handler.setLevel(numeric_level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
@@ -55,8 +63,12 @@ def setup_logging(
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except (OSError, IOError) as e:
-            # Use print since logger might not be fully set up yet
-            print(f"Warning: Could not create log file {log_file}: {e}")
+            # Use print since logger might not be fully set up yet; stderr
+            # keeps stdout free for MCP framing.
+            print(
+                f"Warning: Could not create log file {log_file}: {e}",
+                file=sys.stderr,
+            )
 
     return logger
 
