@@ -11,7 +11,8 @@ import requests
 
 from src.redfish_mcp.exceptions import (
     RedfishError, RedfishConnectionError, RedfishAuthenticationError,
-    RedfishTimeoutError, RedfishServerError, RedfishClientError
+    RedfishTimeoutError, RedfishServerError, RedfishClientError,
+    RedfishCircuitBreakerError
 )
 from src.redfish_mcp.circuit_breaker import CircuitBreaker, CircuitBreakerState
 from src.redfish_mcp.retry import RetryConfig, retry_with_backoff, calculate_backoff_delay
@@ -239,6 +240,47 @@ class TestRedfishClient(unittest.TestCase):
         self.client.max_response_bytes = 4
         with self.assertRaises(RedfishClientError):
             self.client.get("/test")
+
+    @patch('requests.Session.request')
+    def test_circuit_breaker_counts_http_5xx(self, mock_request):
+        """Repeated 5xx responses count toward the breaker threshold."""
+        from src.redfish_mcp.client import RedfishClient
+
+        breaker = CircuitBreaker(
+            failure_threshold=2,
+            recovery_timeout=60.0,
+            expected_exception=(RedfishServerError,),
+        )
+        client = RedfishClient(
+            base_url="http://test-server/redfish/v1",
+            enable_retry=False,
+            circuit_breaker=breaker,
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.headers = {}
+        mock_response.content = b'{"error": {"message": "Server error"}}'
+        mock_response.json.return_value = {"error": {"message": "Server error"}}
+        http_error = requests.HTTPError("500 Server Error")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+        mock_request.return_value = mock_response
+
+        with self.assertRaises(RedfishServerError):
+            client.get("/Systems")
+        self.assertEqual(breaker._failure_count, 1)
+        self.assertEqual(breaker.state, CircuitBreakerState.CLOSED)
+
+        with self.assertRaises(RedfishServerError):
+            client.get("/Systems")
+        self.assertEqual(breaker._failure_count, 2)
+        self.assertEqual(breaker.state, CircuitBreakerState.OPEN)
+
+        with self.assertRaises(RedfishCircuitBreakerError):
+            client.get("/Systems")
+
+        self.assertEqual(mock_request.call_count, 2)
 
 
 if __name__ == '__main__':
