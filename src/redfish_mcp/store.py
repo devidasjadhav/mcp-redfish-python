@@ -51,6 +51,9 @@ class SQLiteContractStore(ContractStore):
         self._lock = threading.RLock()
         self._memory_connection: Optional[sqlite3.Connection] = None
         if path == ":memory:":
+            # The in-memory database lives only inside this single connection.
+            # It is shared by all threads via check_same_thread=False, so every
+            # transaction on it must hold ``_lock`` to avoid interleaved commits.
             self._memory_connection = sqlite3.connect(path, check_same_thread=False)
             self._memory_connection.row_factory = sqlite3.Row
         if path != ":memory:":
@@ -65,7 +68,7 @@ class SQLiteContractStore(ContractStore):
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
                 """
@@ -101,7 +104,7 @@ class SQLiteContractStore(ContractStore):
             )
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT revision, document FROM contracts WHERE contract_key = ?",
                 (key,),
@@ -157,7 +160,7 @@ class SQLiteContractStore(ContractStore):
             return revision
 
     def invalidate(self, key: str) -> None:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute(
                 "DELETE FROM contracts WHERE contract_key = ?",
                 (key,),
@@ -169,7 +172,7 @@ class SQLiteContractStore(ContractStore):
         stored["audit_id"] = audit_id
         stored.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
         key = str(stored["contract_key"])
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             connection.execute(
                 "INSERT INTO audits(audit_id, contract_key, created_at, record) "
                 "VALUES (?, ?, ?, ?)",
@@ -178,7 +181,7 @@ class SQLiteContractStore(ContractStore):
         return audit_id
 
     def list_audits(self, key: Optional[str] = None) -> List[Dict[str, Any]]:
-        with self._connect() as connection:
+        with self._lock, self._connect() as connection:
             if key is None:
                 rows = connection.execute(
                     "SELECT record FROM audits ORDER BY created_at"

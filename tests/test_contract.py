@@ -1,6 +1,7 @@
 """Tests for learned contracts, target selection, and safe writes."""
 
 import tempfile
+import threading
 import unittest
 import json
 import os
@@ -234,6 +235,45 @@ class TestSQLiteContractStore(unittest.TestCase):
             self.assertIsNone(store.get("target:role"))
             self.assertEqual(store.put("target:role", {"value": 3}, 0), 2)
             self.assertEqual(store.list_audits("target:role")[0]["audit_id"], audit_id)
+
+    def test_memory_store_is_safe_for_concurrent_use(self):
+        store = SQLiteContractStore(":memory:")
+        thread_count = 4
+        iterations = 100
+        errors = []
+        barrier = threading.Barrier(thread_count)
+
+        def worker(worker_index):
+            key = f"target:{worker_index}"
+            barrier.wait()
+            for revision in range(iterations):
+                try:
+                    store.put(key, {"worker": worker_index}, revision)
+                    self.assertIsNotNone(store.get(key))
+                    store.append_audit(
+                        {"contract_key": key, "operation": "PATCH"}
+                    )
+                    store.list_audits(key)
+                except BaseException as exc:  # surfaced after the threads join
+                    errors.append(exc)
+                    return
+
+        threads = [
+            threading.Thread(target=worker, args=(worker_index,))
+            for worker_index in range(thread_count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+            self.assertFalse(thread.is_alive(), "worker thread did not finish")
+
+        self.assertEqual(errors, [])
+        for worker_index in range(thread_count):
+            self.assertEqual(
+                store.get(f"target:{worker_index}")["revision"], iterations
+            )
+        self.assertEqual(len(store.list_audits()), thread_count * iterations)
 
     def test_redis_compare_and_swap_with_fake_client(self):
         store = RedisContractStore.__new__(RedisContractStore)
