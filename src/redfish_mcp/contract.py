@@ -400,17 +400,17 @@ class ContractResolver:
         collection_uri = root.get("JsonSchemas", {}).get("@odata.id")
         if not collection_uri:
             return {}
-        resource_name = odata_type.strip("#").split(".", 1)[0]
+        resource_name = self._base_schema_type(odata_type)
         try:
             collection = self.client.get(collection_uri)
             for member in collection.get("Members", [])[: self.max_resources]:
                 descriptor = self.client.get(member["@odata.id"])
-                schema_name = str(
-                    descriptor.get("Schema")
-                    or descriptor.get("Name")
-                    or descriptor.get("Id")
-                    or ""
-                )
+                if descriptor.get("Schema"):
+                    schema_name = self._base_schema_type(descriptor["Schema"])
+                else:
+                    schema_name = str(
+                        descriptor.get("Name") or descriptor.get("Id") or ""
+                    )
                 if schema_name.lower() != resource_name.lower():
                     continue
                 for location in descriptor.get("Location", []):
@@ -472,6 +472,16 @@ class ContractResolver:
                 "allowable_values": definition.get("enum"),
             }
         return result
+
+    @staticmethod
+    def _base_schema_type(value: Any) -> str:
+        """Reduce a Redfish schema reference to its base type name.
+
+        ``@odata.type`` and JsonSchemaFile ``Schema`` values are full
+        versioned types such as ``#Chassis.v1_11_0.Chassis``. The base type
+        is the first dot-separated segment without the leading ``#``.
+        """
+        return str(value).strip().lstrip("#").split(".", 1)[0]
 
     def _settings_writable(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         result = self._annotated_writable(payload)
