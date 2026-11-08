@@ -171,6 +171,103 @@ class TestRedfishClient(unittest.TestCase):
             enable_circuit_breaker=False
         )
 
+    @staticmethod
+    def _mock_response(status_code, location=None, payload=None):
+        """Build a mock HTTP response for redirect tests."""
+        response = Mock()
+        response.status_code = status_code
+        response.headers = {"Location": location} if location else {}
+        response.content = b"{}" if payload is not None else b""
+        response.json.return_value = payload if payload is not None else {}
+        return response
+
+    @patch('requests.Session.request')
+    def test_303_redirect_after_post_switches_to_get_without_body(self, mock_request):
+        """A 303 must be followed with a bodiless GET."""
+        mock_request.side_effect = [
+            self._mock_response(303, "/redfish/v1/TaskMonitor/1"),
+            self._mock_response(204),
+        ]
+
+        result, status = self.client.post_with_status(
+            "/redfish/v1/Actions/Reset", {"ResetType": "GracefulRestart"}
+        )
+
+        self.assertEqual(result, {})
+        self.assertEqual(status, 204)
+        self.assertEqual(mock_request.call_count, 2)
+        first, second = mock_request.call_args_list
+        self.assertEqual(first.args[0], "POST")
+        self.assertEqual(first.kwargs["json"], {"ResetType": "GracefulRestart"})
+        self.assertEqual(second.args[0], "GET")
+        self.assertNotIn("json", second.kwargs)
+        self.assertNotIn("data", second.kwargs)
+
+    @patch('requests.Session.request')
+    def test_301_and_302_redirects_after_post_switch_to_get(self, mock_request):
+        """301/302 after a write are followed with a bodiless GET."""
+        for status_code in (301, 302):
+            with self.subTest(status_code=status_code):
+                mock_request.reset_mock()
+                mock_request.side_effect = [
+                    self._mock_response(
+                        status_code, "/redfish/v1/TaskMonitor/1"
+                    ),
+                    self._mock_response(200, payload={"TaskState": "Completed"}),
+                ]
+
+                result, status = self.client.post_with_status(
+                    "/redfish/v1/Actions/Reset", {"ResetType": "GracefulRestart"}
+                )
+
+                self.assertEqual(result, {"TaskState": "Completed"})
+                self.assertEqual(status, 200)
+                first, second = mock_request.call_args_list
+                self.assertEqual(first.args[0], "POST")
+                self.assertEqual(
+                    first.kwargs["json"], {"ResetType": "GracefulRestart"}
+                )
+                self.assertEqual(second.args[0], "GET")
+                self.assertNotIn("json", second.kwargs)
+
+    @patch('requests.Session.request')
+    def test_307_redirect_after_post_replays_method_and_body(self, mock_request):
+        """307 preserves the original method and body."""
+        mock_request.side_effect = [
+            self._mock_response(307, "/redfish/v1/Actions/Reset"),
+            self._mock_response(204),
+        ]
+
+        self.client.post_with_status(
+            "/redfish/v1/Actions/Reset", {"ResetType": "GracefulRestart"}
+        )
+
+        first, second = mock_request.call_args_list
+        self.assertEqual(first.args[0], "POST")
+        self.assertEqual(second.args[0], "POST")
+        self.assertEqual(
+            second.kwargs["json"], {"ResetType": "GracefulRestart"}
+        )
+
+    @patch('requests.Session.request')
+    def test_308_redirect_after_post_replays_method_and_body(self, mock_request):
+        """308 preserves the original method and body."""
+        mock_request.side_effect = [
+            self._mock_response(308, "/redfish/v1/Actions/Reset"),
+            self._mock_response(204),
+        ]
+
+        self.client.post_with_status(
+            "/redfish/v1/Actions/Reset", {"ResetType": "GracefulRestart"}
+        )
+
+        first, second = mock_request.call_args_list
+        self.assertEqual(first.args[0], "POST")
+        self.assertEqual(second.args[0], "POST")
+        self.assertEqual(
+            second.kwargs["json"], {"ResetType": "GracefulRestart"}
+        )
+
     def test_url_building(self):
         """Test URL building logic."""
         self.assertEqual(
