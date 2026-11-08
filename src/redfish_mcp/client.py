@@ -201,14 +201,16 @@ class RedfishClient:
         def _make_request():
             try:
                 current_url = self._build_url(url)
+                current_method = method
+                request_kwargs = dict(kwargs)
                 for _ in range(4):
                     response = self.session.request(
-                        method,
+                        current_method,
                         current_url,
                         timeout=self.timeout,
                         verify=self.verify_ssl,
                         allow_redirects=False,
-                        **kwargs
+                        **request_kwargs
                     )
                     if response.status_code not in (301, 302, 303, 307, 308):
                         return response
@@ -220,6 +222,19 @@ class RedfishClient:
                         raise RedfishClientError(
                             f"Refusing off-origin redirect to {redirected_url}"
                         )
+                    if response.status_code == 303 or (
+                        response.status_code in (301, 302)
+                        and current_method not in ("GET", "HEAD")
+                    ):
+                        # A 303 always means "retrieve this other resource", and
+                        # browsers also switch 301/302 POSTs to GET. 307/308
+                        # preserve the method and body.
+                        current_method = "GET"
+                        request_kwargs = {
+                            key: value
+                            for key, value in request_kwargs.items()
+                            if key not in ("json", "data", "files")
+                        }
                     current_url = redirected_url
                 raise RedfishClientError("Too many Redfish redirects")
             except requests.ConnectionError as e:
