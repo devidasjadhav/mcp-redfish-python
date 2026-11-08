@@ -459,6 +459,64 @@ class TestContractResolver(unittest.TestCase):
             {"Alias": {"type": "string", "allowable_values": None}},
         )
 
+    def test_schema_writable_prefers_exact_version_over_base_name(self):
+        self.client.resources["/redfish/v1"]["JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas"
+        }
+        self.client.resources["/redfish/v1/JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas",
+            "Members": [
+                {"@odata.id": "/redfish/v1/JsonSchemas/Example.v1_0_0"},
+                {"@odata.id": "/redfish/v1/JsonSchemas/Example.v1_11_0"},
+            ],
+        }
+        for version in ("v1_0_0", "v1_11_0"):
+            uri = f"/redfish/v1/JsonSchemas/Example.{version}"
+            self.client.resources[uri] = {
+                "@odata.id": uri,
+                "@odata.type": "#JsonSchemaFile.v1_0_0.JsonSchemaFile",
+                "Schema": f"#Example.{version}.Example",
+                "Location": [
+                    {
+                        "Language": "json-schema",
+                        "Uri": f"{uri}.json",
+                    }
+                ],
+            }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_0_0.json"] = {
+            "definitions": {
+                "Example": {
+                    "properties": {
+                        "LegacyOnly": {"type": "string", "readonly": False},
+                    }
+                }
+            }
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_11_0.json"] = {
+            "definitions": {
+                "Example": {
+                    "properties": {
+                        "NewProperty": {"type": "string", "readonly": False},
+                    }
+                }
+            }
+        }
+        self.resolver._probe()
+        self.client.get_calls.clear()
+        writable = self.resolver._schema_writable("#Example.v1_11_0.Example")
+        self.assertIn(
+            "/redfish/v1/JsonSchemas/Example.v1_11_0.json",
+            self.client.get_calls,
+        )
+        self.assertNotIn(
+            "/redfish/v1/JsonSchemas/Example.v1_0_0.json",
+            self.client.get_calls,
+        )
+        self.assertEqual(
+            writable,
+            {"NewProperty": {"type": "string", "allowable_values": None}},
+        )
+
     def test_firmware_change_invalidates_contract_and_reexplores(self):
         self.resolver.find_capabilities("IPAddress")
         first_revision = self.store.get("target-1:anonymous")["revision"]
