@@ -48,6 +48,7 @@ class FakeRedfishClient:
     def __init__(self):
         self.patch_calls = []
         self.post_calls = []
+        self.get_calls = []
         self.firmware = "1.0.0"
         self.resources = {
             "/redfish/v1": {
@@ -187,6 +188,7 @@ class FakeRedfishClient:
 
     def get_with_headers(self, endpoint: str):
         key = "/redfish/v1" if endpoint == "" else endpoint
+        self.get_calls.append(key)
         if key not in self.resources:
             from src.redfish_mcp.exceptions import RedfishClientError
 
@@ -400,6 +402,120 @@ class TestContractResolver(unittest.TestCase):
         first["Other"] = {"type": "string", "allowable_values": None}
         second = self.resolver._schema_writable("#Example.v1_0_0.Example")
         self.assertNotIn("Other", second)
+
+    def test_schema_writable_matches_full_odata_type_in_descriptor_schema(self):
+        self.client.resources["/redfish/v1"]["JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas"
+        }
+        self.client.resources["/redfish/v1/JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas",
+            "@odata.type": "#JsonSchemaFileCollection.JsonSchemaFileCollection",
+            "Members": [
+                {"@odata.id": "/redfish/v1/JsonSchemas/Example.v1_0_0"},
+                {"@odata.id": "/redfish/v1/JsonSchemas/Other.v1_0_0"},
+            ],
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_0_0"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas/Example.v1_0_0",
+            "@odata.type": "#JsonSchemaFile.v1_0_0.JsonSchemaFile",
+            "Schema": "#Example.v1_0_0.Example",
+            "Location": [
+                {
+                    "Language": "json-schema",
+                    "Uri": "/redfish/v1/JsonSchemas/Example.v1_0_0.json",
+                }
+            ],
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/Other.v1_0_0"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas/Other.v1_0_0",
+            "@odata.type": "#JsonSchemaFile.v1_0_0.JsonSchemaFile",
+            "Schema": "#Other.v1_0_0.Other",
+            "Location": [
+                {
+                    "Language": "json-schema",
+                    "Uri": "/redfish/v1/JsonSchemas/Other.v1_0_0.json",
+                }
+            ],
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_0_0.json"] = {
+            "definitions": {
+                "Example": {
+                    "properties": {
+                        "Alias": {"type": "string", "readonly": False},
+                        "SerialNumber": {"type": "string", "readonly": True},
+                    }
+                }
+            }
+        }
+        self.resolver._probe()
+        self.client.get_calls.clear()
+        writable = self.resolver._schema_writable("#Example.v1_0_0.Example")
+        self.assertIn(
+            "/redfish/v1/JsonSchemas/Example.v1_0_0.json",
+            self.client.get_calls,
+        )
+        self.assertEqual(
+            writable,
+            {"Alias": {"type": "string", "allowable_values": None}},
+        )
+
+    def test_schema_writable_prefers_exact_version_over_base_name(self):
+        self.client.resources["/redfish/v1"]["JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas"
+        }
+        self.client.resources["/redfish/v1/JsonSchemas"] = {
+            "@odata.id": "/redfish/v1/JsonSchemas",
+            "Members": [
+                {"@odata.id": "/redfish/v1/JsonSchemas/Example.v1_0_0"},
+                {"@odata.id": "/redfish/v1/JsonSchemas/Example.v1_11_0"},
+            ],
+        }
+        for version in ("v1_0_0", "v1_11_0"):
+            uri = f"/redfish/v1/JsonSchemas/Example.{version}"
+            self.client.resources[uri] = {
+                "@odata.id": uri,
+                "@odata.type": "#JsonSchemaFile.v1_0_0.JsonSchemaFile",
+                "Schema": f"#Example.{version}.Example",
+                "Location": [
+                    {
+                        "Language": "json-schema",
+                        "Uri": f"{uri}.json",
+                    }
+                ],
+            }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_0_0.json"] = {
+            "definitions": {
+                "Example": {
+                    "properties": {
+                        "LegacyOnly": {"type": "string", "readonly": False},
+                    }
+                }
+            }
+        }
+        self.client.resources["/redfish/v1/JsonSchemas/Example.v1_11_0.json"] = {
+            "definitions": {
+                "Example": {
+                    "properties": {
+                        "NewProperty": {"type": "string", "readonly": False},
+                    }
+                }
+            }
+        }
+        self.resolver._probe()
+        self.client.get_calls.clear()
+        writable = self.resolver._schema_writable("#Example.v1_11_0.Example")
+        self.assertIn(
+            "/redfish/v1/JsonSchemas/Example.v1_11_0.json",
+            self.client.get_calls,
+        )
+        self.assertNotIn(
+            "/redfish/v1/JsonSchemas/Example.v1_0_0.json",
+            self.client.get_calls,
+        )
+        self.assertEqual(
+            writable,
+            {"NewProperty": {"type": "string", "allowable_values": None}},
+        )
 
     def test_firmware_change_invalidates_contract_and_reexplores(self):
         self.resolver.find_capabilities("IPAddress")
