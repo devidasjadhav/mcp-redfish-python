@@ -6,13 +6,33 @@ Unit tests for configuration management
 
 import unittest
 import os
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
 from unittest.mock import patch, mock_open
 from src.redfish_mcp.config import Config
 
 
 class TestConfig(unittest.TestCase):
     """Test configuration management functionality."""
+
+    # Numeric settings: name -> (default, malformed value, expected kind)
+    NUMERIC_SETTINGS = {
+        'REQUEST_TIMEOUT': (30, 'abc', 'an integer'),
+        'MAX_RETRY_ATTEMPTS': (3, 'three', 'an integer'),
+        'RETRY_BASE_DELAY': (1.0, '1s', 'a number'),
+        'RETRY_MAX_DELAY': (30.0, 'soon', 'a number'),
+        'CIRCUIT_BREAKER_THRESHOLD': (5, '5x', 'an integer'),
+        'CIRCUIT_BREAKER_TIMEOUT': (60.0, '1m', 'a number'),
+        'CONTRACT_PROBE_TTL_SECONDS': (30, 'probe', 'an integer'),
+        'CONTRACT_REFRESH_TTL_SECONDS': (300, 'refresh', 'an integer'),
+        'CANDIDATE_TTL_SECONDS': (300, 'candidate', 'an integer'),
+        'EXPLORE_MAX_RESOURCES': (200, 'all', 'an integer'),
+        'EXPLORE_MAX_DEPTH': (8, 'deep', 'an integer'),
+        'EXPLORE_MAX_ACTIONS': (16, 'many', 'an integer'),
+        'MAX_RESPONSE_BYTES': (1048576, '1MB', 'an integer'),
+    }
 
     def setUp(self):
         """Set up test environment."""
@@ -24,7 +44,9 @@ class TestConfig(unittest.TestCase):
             'CONTRACT_PROBE_TTL_SECONDS', 'CONTRACT_REFRESH_TTL_SECONDS',
             'CANDIDATE_TTL_SECONDS',
             'EXPLORE_MAX_RESOURCES', 'EXPLORE_MAX_DEPTH',
-            'EXPLORE_MAX_ACTIONS', 'MAX_RESPONSE_BYTES'
+            'EXPLORE_MAX_ACTIONS', 'MAX_RESPONSE_BYTES',
+            'MAX_RETRY_ATTEMPTS', 'RETRY_BASE_DELAY', 'RETRY_MAX_DELAY',
+            'CIRCUIT_BREAKER_THRESHOLD', 'CIRCUIT_BREAKER_TIMEOUT',
         ]
         for var in env_vars_to_clear:
             os.environ.pop(var, None)
@@ -106,6 +128,61 @@ class TestConfig(unittest.TestCase):
             self.assertTrue(
                 any(error.startswith("LOG_LEVEL must be one of") for error in errors)
             )
+
+    def test_malformed_numeric_setting_is_validation_error(self):
+        """Malformed numeric settings are reported by validate(), not raised."""
+        for name, (default, bad_value, kind) in self.NUMERIC_SETTINGS.items():
+            with self.subTest(setting=name):
+                with patch.dict(os.environ, {name: bad_value}):
+                    config = Config()
+                    errors = config.validate(require_anthropic=False)
+                # The documented default keeps the attribute usable.
+                self.assertEqual(getattr(config, name), default)
+                self.assertIn(
+                    f"{name} must be {kind}, got {bad_value!r}", errors
+                )
+
+    def test_valid_numeric_settings_are_parsed(self):
+        """Valid numeric settings keep their types and values."""
+        env = {
+            'REQUEST_TIMEOUT': '45',
+            'MAX_RETRY_ATTEMPTS': '4',
+            'RETRY_BASE_DELAY': '0.5',
+            'RETRY_MAX_DELAY': '12.5',
+            'CIRCUIT_BREAKER_THRESHOLD': '7',
+            'CIRCUIT_BREAKER_TIMEOUT': '90.5',
+            'CONTRACT_PROBE_TTL_SECONDS': '10',
+            'CONTRACT_REFRESH_TTL_SECONDS': '600',
+            'CANDIDATE_TTL_SECONDS': '120',
+            'EXPLORE_MAX_RESOURCES': '50',
+            'EXPLORE_MAX_DEPTH': '4',
+            'EXPLORE_MAX_ACTIONS': '8',
+            'MAX_RESPONSE_BYTES': '2048',
+        }
+        with patch.dict(os.environ, env):
+            config = Config()
+
+        self.assertEqual(config.validate(require_anthropic=False), [])
+        self.assertEqual(config.REQUEST_TIMEOUT, 45)
+        self.assertEqual(config.MAX_RETRY_ATTEMPTS, 4)
+        self.assertEqual(config.RETRY_BASE_DELAY, 0.5)
+        self.assertEqual(config.RETRY_MAX_DELAY, 12.5)
+        self.assertEqual(config.MAX_RESPONSE_BYTES, 2048)
+
+    def test_module_import_with_malformed_numeric_settings(self):
+        """Importing config.py must not crash on malformed numeric values."""
+        repo_root = Path(__file__).resolve().parents[1]
+        env = os.environ.copy()
+        env.update({'REQUEST_TIMEOUT': 'abc', 'RETRY_BASE_DELAY': '1s'})
+
+        result = subprocess.run(
+            [sys.executable, '-c', 'import src.redfish_mcp.config'],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
 
     def test_to_dict_masks_sensitive_data(self):
         """Test that to_dict masks sensitive information."""
